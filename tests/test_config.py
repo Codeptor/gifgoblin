@@ -27,6 +27,9 @@ ENV_VARS = (
 
 @pytest.fixture(autouse=True)
 def clean_env(monkeypatch, tmp_path):
+    # find_dotenv walks up from config.py's directory (not cwd), so chdir alone
+    # would not stop a real project .env from repopulating the deleted vars
+    monkeypatch.setenv("PYTHON_DOTENV_DISABLED", "1")
     monkeypatch.chdir(tmp_path)
     for var in ENV_VARS:
         monkeypatch.delenv(var, raising=False)
