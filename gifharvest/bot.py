@@ -79,13 +79,24 @@ class GifHarvestBot(commands.Bot):
                 try:
                     candidates = await self.scraper.fetch_new(self.store, handle)
                 except NoAccountError:
-                    log.error(
-                        "no usable twscrape account in the pool — add one with "
-                        "`gifharvest accounts add` (see README); aborting this cycle"
-                    )
+                    if await self.scraper.has_active_accounts():
+                        log.warning(
+                            "all twscrape accounts are rate-limited — aborting this "
+                            "cycle, retrying on the next poll"
+                        )
+                    else:
+                        log.error(
+                            "no usable twscrape account in the pool — add one with "
+                            "`gifharvest accounts add` (see README); aborting this cycle"
+                        )
                     break
                 except Exception:
                     log.exception("scrape failed for @%s", handle)
+                    errors += 1
+                    continue
+                if candidates is None:
+                    # resolution can fail transiently; skipping mark_scraped keeps
+                    # first-run backfill protection for the next attempt
                     errors += 1
                     continue
 
@@ -93,6 +104,7 @@ class GifHarvestBot(commands.Bot):
                 to_post, to_skip = plan_posts(
                     candidates, first_run=first_run, backfill_count=self.cfg.backfill_count
                 )
+                failed_tweets: set[int] = set()
                 for candidate in to_skip:
                     await self.store.mark_seen(candidate)
                 for candidate in to_post:
@@ -100,11 +112,31 @@ class GifHarvestBot(commands.Bot):
                         await self._post(channel, candidate, limit)
                         await self.store.record_post(candidate)
                         posted += 1
+                    except httpx.HTTPStatusError as exc:
+                        if exc.response.status_code < 500:
+                            # 4xx means the media is permanently gone — retrying
+                            # every cycle forever is pointless
+                            log.warning(
+                                "media for %s gone (HTTP %d) — marking seen",
+                                candidate.tweet_url,
+                                exc.response.status_code,
+                            )
+                            await self.store.mark_seen(candidate)
+                        else:
+                            log.exception("failed to post %s", candidate.tweet_url)
+                            failed_tweets.add(candidate.tweet_id)
+                        errors += 1
                     except Exception:
                         # not marked seen, so it gets retried next cycle
                         log.exception("failed to post %s", candidate.tweet_url)
+                        failed_tweets.add(candidate.tweet_id)
                         errors += 1
                     await asyncio.sleep(_POST_PAUSE_SECONDS)
+                # tweet-id dedupe only once every candidate of a tweet is handled,
+                # so a failed sibling of a posted candidate stays retryable
+                handled = {c.tweet_id for c in to_post} | {c.tweet_id for c in to_skip}
+                for tweet_id in handled - failed_tweets:
+                    await self.store.mark_tweet_seen(tweet_id)
                 await self.store.mark_scraped(handle)
 
             return {"handles": len(handles), "posted": posted, "errors": errors}
@@ -143,6 +175,11 @@ class GifHarvestBot(commands.Bot):
         )
 
     async def close(self) -> None:
+        # stop the poller and let an in-flight cycle unwind before tearing down
+        # the http client/store, otherwise shutdown races a cycle mid-post
+        self.poller.cancel()
+        async with self._cycle_lock:
+            pass
         await self.http_client.aclose()
         await super().close()
 
@@ -205,11 +242,18 @@ class HarvestCog(commands.Cog):
     async def scan(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer(ephemeral=True, thinking=True)
         result = await self.bot.run_cycle()
-        await interaction.followup.send(
+        summary = (
             f"Scanned {result['handles']} handle(s): "
-            f"{result['posted']} posted, {result['errors']} error(s).",
-            ephemeral=True,
+            f"{result['posted']} posted, {result['errors']} error(s)."
         )
+        try:
+            await interaction.followup.send(summary, ephemeral=True)
+        except discord.HTTPException:
+            # interaction tokens expire after 15 minutes; a long cycle (plus
+            # waiting on a poller-held cycle lock) can outlive them
+            log.warning("scan finished after the interaction expired: %s", summary)
+            if interaction.channel is not None:
+                await interaction.channel.send(summary)
 
     @app_commands.command(name="harveststats", description="Show harvest stats")
     async def harveststats(self, interaction: discord.Interaction) -> None:
