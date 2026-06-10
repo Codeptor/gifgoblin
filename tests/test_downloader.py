@@ -123,3 +123,8 @@ async def test_convert_to_gif_produces_gif(tiny_mp4):
 @needs_ffmpeg
 async def test_convert_to_gif_respects_max_bytes(tiny_mp4):
     assert await convert_to_gif(tiny_mp4, fps=10, max_width=64, max_bytes=1) is None
+
+
+async def test_convert_to_gif_missing_ffmpeg_falls_back(monkeypatch, tmp_path):
+    monkeypatch.setenv("PATH", str(tmp_path))
+    assert await convert_to_gif(b"not-a-real-mp4", fps=10, max_width=64, max_bytes=1000) is None

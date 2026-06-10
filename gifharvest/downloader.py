@@ -10,6 +10,8 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
+_ffmpeg_missing_logged = False
+
 
 @dataclass(frozen=True)
 class Download:
@@ -46,11 +48,23 @@ async def convert_to_gif(mp4: bytes, *, fps: int, max_width: int, max_bytes: int
         dst = Path(tmp) / "out.gif"
         src.write_bytes(mp4)
         args = gif_ffmpeg_args(str(src), str(dst), fps=fps, max_width=max_width)
-        proc = await asyncio.create_subprocess_exec(
-            *args,
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.PIPE,
-        )
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *args,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.PIPE,
+            )
+        except OSError as exc:
+            # no ffmpeg on PATH must degrade to the mp4 upload, not kill posting
+            global _ffmpeg_missing_logged
+            if not _ffmpeg_missing_logged:
+                _ffmpeg_missing_logged = True
+                logger.error(
+                    "ffmpeg unavailable (%s) — CONVERT_TO_GIF is on but mp4s "
+                    "will be uploaded unconverted",
+                    exc,
+                )
+            return None
         _, stderr = await proc.communicate()
         if proc.returncode != 0:
             logger.warning(
