@@ -29,11 +29,12 @@ Tests: `tests/helpers.py` has factories `tweet()/anim()/video()/video_variant()/
 
 ## Known constraints
 
-- X "GIFs" are not gif files — they are looping mp4s under `animated_gif` media. X allows at most one gif per tweet.
+- X "GIFs" are not gif files — they are looping mp4s under `animated_gif` media. Mixed-media tweets can carry a gif plus videos, so one tweet can yield several candidates.
+- twscrape's `user_tweets` yields every Tweet object found in the GQL response — RT/quote originals surface standalone (with `retweetedTweet=None`) and promoted tweets are included. `fetch_new` keeps only tweets authored by the tracked uid; retweets are resolved through the wrapper tweet so attribution works.
 - Discord free-tier upload limit is 10 MB; the bot auto-uses the guild's `filesize_limit` when `MAX_UPLOAD_BYTES=0` (boosted guilds get more). Oversized files fall back to a d.fxtwitter.com embed link.
 - Two separate databases: twscrape's donor-account pool lives in `ACCOUNTS_DB` (`data/accounts.db`), gifharvest state in `DB_PATH` (`data/gifharvest.db`). Don't conflate them.
 - Donor X accounts can get rate-limited or banned at any time — that's why burners are used and why rate-limit headroom scales with pool size.
 - First scrape of a newly tracked handle: only the newest `BACKFILL_COUNT` candidates are posted; everything else is marked seen. Subsequent scrapes post all new candidates.
-- Dedupe is by tweet id AND media URL, making it retweet-safe (the same media via a retweet won't repost).
-- `CONVERT_TO_GIF=true` needs ffmpeg on PATH; conversion falls back to mp4 upload if the resulting gif exceeds the upload limit.
+- Dedupe: `is_seen` matches tweet id OR media URL. `mark_seen`/`record_post` insert only the media URL; the tweet id is inserted via `mark_tweet_seen` only once every candidate of that tweet is handled — so a failed sibling of a posted candidate stays retryable. Retweet-safe either way (same media via a retweet won't repost).
+- `CONVERT_TO_GIF=true` needs ffmpeg on PATH; conversion falls back to mp4 upload if ffmpeg is missing or the resulting gif exceeds the upload limit.
 - `data/` and `.env` are gitignored — never commit them.
