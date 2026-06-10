@@ -108,11 +108,15 @@ class Store:
 
     async def mark_seen(self, candidate: GifCandidate) -> None:
         await self._db.execute(
-            "INSERT OR IGNORE INTO seen_tweets (id) VALUES (?)", (candidate.tweet_id,)
-        )
-        await self._db.execute(
             "INSERT OR IGNORE INTO seen_media (url) VALUES (?)", (candidate.media_url,)
         )
+        await self._db.commit()
+
+    async def mark_tweet_seen(self, tweet_id: int) -> None:
+        # tweet-level dedupe is only safe once every candidate of the tweet is
+        # handled — a premature insert would permanently drop a failed sibling,
+        # since is_seen matches on tweet_id alone
+        await self._db.execute("INSERT OR IGNORE INTO seen_tweets (id) VALUES (?)", (tweet_id,))
         await self._db.commit()
 
     async def record_post(self, candidate: GifCandidate) -> None:

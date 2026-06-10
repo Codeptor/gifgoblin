@@ -2,10 +2,15 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
+from zlib import crc32
 
 from gifharvest.models import GifCandidate, MediaKind
 
 BASE = datetime(2026, 6, 1, tzinfo=UTC)
+
+
+def user_id_for(handle: str) -> int:
+    return crc32(handle.lower().encode())
 
 
 def anim(url: str = "https://video.twimg.com/tweet_video/abc.mp4") -> SimpleNamespace:
@@ -40,7 +45,7 @@ def tweet(
         id=tid,
         url=f"https://x.com/{user}/status/{tid}",
         date=BASE + timedelta(minutes=minutes),
-        user=SimpleNamespace(username=user),
+        user=SimpleNamespace(username=user, id=user_id_for(user)),
         media=SimpleNamespace(photos=[], videos=list(videos), animated=list(animated)),
         retweetedTweet=retweeted,
         quotedTweet=None,

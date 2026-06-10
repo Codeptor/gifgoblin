@@ -65,20 +65,28 @@ async def test_first_scrape_lifecycle(store: Store):
 # -- dedupe -------------------------------------------------------------------
 
 
-async def test_mark_seen_dedupes_by_tweet_id_and_media_url(store: Store):
+async def test_mark_seen_dedupes_by_media_url_only(store: Store):
     c = candidate(tid=1, media_url="https://video.twimg.com/tweet_video/abc.mp4")
     assert await store.is_seen(c) is False
     await store.mark_seen(c)
     assert await store.is_seen(c) is True
 
+    # a sibling candidate of the same tweet stays postable (partial-failure retry)
     same_tweet = candidate(tid=1, media_url="https://video.twimg.com/tweet_video/other.mp4")
-    assert await store.is_seen(same_tweet) is True
+    assert await store.is_seen(same_tweet) is False
 
     same_media = candidate(tid=999, media_url="https://video.twimg.com/tweet_video/abc.mp4")
     assert await store.is_seen(same_media) is True
 
     fresh = candidate(tid=2, media_url="https://video.twimg.com/tweet_video/new.mp4")
     assert await store.is_seen(fresh) is False
+
+
+async def test_mark_tweet_seen_blocks_every_media_of_that_tweet(store: Store):
+    await store.mark_tweet_seen(1)
+    assert await store.is_seen(candidate(tid=1, media_url="https://v/x.mp4")) is True
+    assert await store.is_seen(candidate(tid=1, media_url="https://v/y.mp4")) is True
+    assert await store.is_seen(candidate(tid=2, media_url="https://v/z.mp4")) is False
 
 
 async def test_record_post_marks_seen_and_updates_stats(store: Store):

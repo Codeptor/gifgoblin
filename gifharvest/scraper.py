@@ -107,13 +107,25 @@ class TwitterScraper:
         await store.set_user_id(handle, user.id)
         return user.id
 
-    async def fetch_new(self, store: Store, handle: str) -> list[GifCandidate]:
+    async def has_active_accounts(self) -> bool:
+        stats = await self._api.pool.stats()
+        return stats.get("active", 0) > 0
+
+    async def fetch_new(self, store: Store, handle: str) -> list[GifCandidate] | None:
+        """Return new candidates for a handle, or None when resolution failed."""
         uid = await self.resolve_user_id(store, handle)
         if uid is None:
-            return []
+            # None (not []) so callers don't mistake a transient resolution
+            # failure for "nothing new" and burn first-run backfill protection
+            return None
         fresh: list[GifCandidate] = []
         batch_urls: set[str] = set()
         async for tweet in self._api.user_tweets(uid, limit=self._cfg.scrape_limit):
+            # user_tweets yields every Tweet object in the GQL response, so
+            # RT/quote originals and promoted tweets surface standalone —
+            # keep only the tracked author's own timeline entries
+            if tweet.user.id != uid:
+                continue
             for cand in extract_candidates(
                 tweet,
                 handle,

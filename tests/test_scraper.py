@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from types import SimpleNamespace
 
 import pytest
-from helpers import BASE, anim, candidate, tweet, video, video_variant
+from helpers import BASE, anim, candidate, tweet, user_id_for, video, video_variant
 
+from gifharvest.db import Store
 from gifharvest.models import MediaKind
-from gifharvest.scraper import extract_candidates, normalize_handle, plan_posts
+from gifharvest.scraper import TwitterScraper, extract_candidates, normalize_handle, plan_posts
 
 
 def _extract(tw, tracked="shitposter", *, retweets=False, videos=False):
@@ -140,6 +142,69 @@ def test_normalize_handle_accepts(raw: str, expected: str):
 )
 def test_normalize_handle_rejects(raw: str):
     assert normalize_handle(raw) is None
+
+
+# -- fetch_new ---------------------------------------------------------------------
+
+
+class FakeAPI:
+    def __init__(self, tweets: list, resolvable: bool = True):
+        self._tweets = tweets
+        self._resolvable = resolvable
+
+    async def user_by_login(self, handle: str):
+        if not self._resolvable:
+            return None
+        return SimpleNamespace(id=user_id_for(handle), username=handle)
+
+    async def user_tweets(self, uid: int, limit: int = -1):
+        for tw in self._tweets:
+            yield tw
+
+
+def make_scraper(tweets: list, *, retweets: bool = False, resolvable: bool = True):
+    cfg = SimpleNamespace(scrape_limit=20, include_retweets=retweets, include_videos=False)
+    return TwitterScraper(FakeAPI(tweets, resolvable), cfg)
+
+
+@pytest.fixture
+async def store(tmp_path):
+    s = await Store.open(tmp_path / "t.db")
+    yield s
+    await s.close()
+
+
+async def test_fetch_new_drops_foreign_author_tweets(store: Store):
+    # twscrape yields the RT's original tweet standalone (retweetedTweet=None);
+    # it must not leak past INCLUDE_RETWEETS=false
+    original = tweet(tid=10, user="og_author", animated=[anim("https://v/og.mp4")])
+    rt = tweet(tid=99, user="tracked_guy", minutes=60, retweeted=original)
+    scraper = make_scraper([rt, original])
+    assert await scraper.fetch_new(store, "tracked_guy") == []
+
+
+async def test_fetch_new_with_retweets_attributes_via_wrapper(store: Store):
+    original = tweet(tid=10, user="og_author", minutes=-120, animated=[anim("https://v/og.mp4")])
+    rt = tweet(tid=99, user="tracked_guy", minutes=60, retweeted=original)
+    scraper = make_scraper([rt, original], retweets=True)
+    (cand,) = await scraper.fetch_new(store, "tracked_guy")
+    assert cand.tweet_id == 10
+    assert cand.author == "og_author"
+    assert cand.via_retweet is True
+
+
+async def test_fetch_new_keeps_own_tweets_and_skips_seen(store: Store):
+    own = tweet(tid=1, user="shitposter", animated=[anim("https://v/a.mp4")])
+    seen = tweet(tid=2, user="shitposter", minutes=5, animated=[anim("https://v/b.mp4")])
+    scraper = make_scraper([own, seen])
+    await store.mark_seen(candidate(tid=2, media_url="https://v/b.mp4"))
+    (cand,) = await scraper.fetch_new(store, "shitposter")
+    assert cand.tweet_id == 1
+
+
+async def test_fetch_new_returns_none_when_resolution_fails(store: Store):
+    scraper = make_scraper([], resolvable=False)
+    assert await scraper.fetch_new(store, "ghost") is None
 
 
 # -- plan_posts -------------------------------------------------------------------
