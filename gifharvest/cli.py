@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import contextlib
+import getpass
 import logging
 import sys
 
@@ -22,8 +23,20 @@ RESET = "\033[0m"
 _NO_ACCOUNT_HINT = (
     f"{RED}No usable X account in the pool.{RESET}\n"
     "Add a donor account with cookies from a logged-in browser session:\n"
-    '  uv run gifharvest accounts add <user> --cookies "auth_token=...; ct0=..."'
+    "  uv run gifharvest accounts add <user>"
 )
+
+_RATE_LIMITED_HINT = (
+    f"{RED}All donor accounts are currently rate-limited.{RESET}\n"
+    "Wait for the limits to reset, or add more burners to the pool."
+)
+
+
+def _open_api(cfg: Config, **kwargs) -> API:
+    # twscrape opens its pool db with a bare sqlite connect and never creates
+    # the parent directory — a fresh clone would crash on `accounts add`
+    cfg.accounts_db.parent.mkdir(parents=True, exist_ok=True)
+    return API(str(cfg.accounts_db), **kwargs)
 
 
 def _setup_logging(cfg: Config) -> None:
@@ -40,7 +53,7 @@ async def cmd_run() -> None:
     _setup_logging(cfg)
     store = await Store.open(cfg.db_path)
     try:
-        api = API(str(cfg.accounts_db), raise_when_no_account=True)
+        api = _open_api(cfg, raise_when_no_account=True)
         scraper = TwitterScraper(api, cfg)
         # imported lazily so track/stats/accounts never pay the discord import cost
         from .bot import GifHarvestBot
@@ -62,12 +75,15 @@ async def cmd_scrape(mark_seen: bool) -> None:
             print("No handles tracked. Add some with: uv run gifharvest track add <handle>")
             return
 
-        api = API(str(cfg.accounts_db), raise_when_no_account=True)
+        api = _open_api(cfg, raise_when_no_account=True)
         scraper = TwitterScraper(api, cfg)
         total = 0
         try:
             for handle in handles:
                 candidates = await scraper.fetch_new(store, handle)
+                if candidates is None:
+                    print(f"{BOLD}@{handle}{RESET}  {RED}could not resolve{RESET}")
+                    continue
                 print(f"{BOLD}@{handle}{RESET}  ({len(candidates)} new)")
                 for c in candidates:
                     rt = " (RT)" if c.via_retweet else ""
@@ -77,9 +93,13 @@ async def cmd_scrape(mark_seen: bool) -> None:
                     )
                     if mark_seen:
                         await store.mark_seen(c)
+                if mark_seen:
+                    for tweet_id in {c.tweet_id for c in candidates}:
+                        await store.mark_tweet_seen(tweet_id)
                 total += len(candidates)
         except NoAccountError:
-            print(_NO_ACCOUNT_HINT, file=sys.stderr)
+            rate_limited = await scraper.has_active_accounts()
+            print(_RATE_LIMITED_HINT if rate_limited else _NO_ACCOUNT_HINT, file=sys.stderr)
             sys.exit(1)
 
         suffix = " — marked seen" if mark_seen else " (left unposted; the bot will pick them up)"
@@ -120,18 +140,36 @@ async def cmd_track(action: str, raw_handles: list[str]) -> None:
         await store.close()
 
 
-async def cmd_accounts_add(username: str, cookies: str) -> None:
+def _read_cookies() -> str:
+    # keep the auth_token off argv: no shell history, no /proc/<pid>/cmdline
+    if sys.stdin.isatty():
+        return getpass.getpass('cookie string ("auth_token=...; ct0=..."): ').strip()
+    return sys.stdin.read().strip()
+
+
+async def cmd_accounts_add(username: str, cookies: str | None) -> None:
     cfg = Config.load(require_discord=False)
     _setup_logging(cfg)
-    api = API(str(cfg.accounts_db))
+    if cookies is None:
+        cookies = _read_cookies()
+    if not cookies:
+        print(f"{RED}✗{RESET} empty cookie string", file=sys.stderr)
+        sys.exit(1)
+    api = _open_api(cfg)
+    # add_account_cookies silently ignores existing usernames — delete first
+    # so re-running with fresh cookies actually refreshes the session
+    existing = await api.pool.get_account(username)
+    if existing is not None:
+        await api.pool.delete_accounts(username)
     await api.pool.add_account_cookies(username, cookies)
-    print(f"{GREEN}✓{RESET} account @{username} added to the pool")
+    verb = "cookies refreshed" if existing is not None else "added to the pool"
+    print(f"{GREEN}✓{RESET} account @{username} {verb}")
 
 
 async def cmd_accounts_list() -> None:
     cfg = Config.load(require_discord=False)
     _setup_logging(cfg)
-    api = API(str(cfg.accounts_db))
+    api = _open_api(cfg)
     infos = await api.pool.accounts_info()
     if not infos:
         print("No accounts in the pool.")
@@ -199,8 +237,8 @@ def _build_parser() -> argparse.ArgumentParser:
     p_acc_add.add_argument("username")
     p_acc_add.add_argument(
         "--cookies",
-        required=True,
-        help='cookie string, e.g. "auth_token=...; ct0=..."',
+        help='cookie string, e.g. "auth_token=...; ct0=..." (omit to enter it '
+        "at a hidden prompt or pipe it via stdin)",
     )
     acc_sub.add_parser("list", help="list pool accounts")
 
