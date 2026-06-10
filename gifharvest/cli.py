@@ -1,0 +1,229 @@
+from __future__ import annotations
+
+import argparse
+import asyncio
+import contextlib
+import logging
+import sys
+
+from twscrape import API, NoAccountError, set_log_level
+
+from .config import Config
+from .db import Store
+from .scraper import TwitterScraper, normalize_handle
+
+BOLD = "\033[1m"
+DIM = "\033[2m"
+CYAN = "\033[36m"
+GREEN = "\033[32m"
+RED = "\033[31m"
+RESET = "\033[0m"
+
+_NO_ACCOUNT_HINT = (
+    f"{RED}No usable X account in the pool.{RESET}\n"
+    "Add a donor account with cookies from a logged-in browser session:\n"
+    '  uv run gifharvest accounts add <user> --cookies "auth_token=...; ct0=..."'
+)
+
+
+def _setup_logging(cfg: Config) -> None:
+    logging.basicConfig(
+        level=cfg.log_level,
+        format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
+    )
+    if cfg.log_level != "DEBUG":
+        set_log_level("WARNING")
+
+
+async def cmd_run() -> None:
+    cfg = Config.load(require_discord=True)
+    _setup_logging(cfg)
+    store = await Store.open(cfg.db_path)
+    try:
+        api = API(str(cfg.accounts_db), raise_when_no_account=True)
+        scraper = TwitterScraper(api, cfg)
+        # imported lazily so track/stats/accounts never pay the discord import cost
+        from .bot import GifHarvestBot
+
+        bot = GifHarvestBot(cfg, store, scraper)
+        async with bot:
+            await bot.start(cfg.discord_token)
+    finally:
+        await store.close()
+
+
+async def cmd_scrape(mark_seen: bool) -> None:
+    cfg = Config.load(require_discord=False)
+    _setup_logging(cfg)
+    store = await Store.open(cfg.db_path)
+    try:
+        handles = await store.handles()
+        if not handles:
+            print("No handles tracked. Add some with: uv run gifharvest track add <handle>")
+            return
+
+        api = API(str(cfg.accounts_db), raise_when_no_account=True)
+        scraper = TwitterScraper(api, cfg)
+        total = 0
+        try:
+            for handle in handles:
+                candidates = await scraper.fetch_new(store, handle)
+                print(f"{BOLD}@{handle}{RESET}  ({len(candidates)} new)")
+                for c in candidates:
+                    rt = " (RT)" if c.via_retweet else ""
+                    print(
+                        f"  {DIM}{c.tweet_date.isoformat()}{RESET}"
+                        f"  [{c.kind.value}] @{c.author}{rt}  {CYAN}{c.media_url}{RESET}"
+                    )
+                    if mark_seen:
+                        await store.mark_seen(c)
+                total += len(candidates)
+        except NoAccountError:
+            print(_NO_ACCOUNT_HINT, file=sys.stderr)
+            sys.exit(1)
+
+        suffix = " — marked seen" if mark_seen else " (left unposted; the bot will pick them up)"
+        print(f"\n{BOLD}{total}{RESET} new candidate(s) across {len(handles)} handle(s){suffix}")
+    finally:
+        await store.close()
+
+
+async def cmd_track(action: str, raw_handles: list[str]) -> None:
+    cfg = Config.load(require_discord=False)
+    store = await Store.open(cfg.db_path)
+    try:
+        if action == "list":
+            tracked = await store.handles()
+            if not tracked:
+                print("No handles tracked.")
+                return
+            for h in tracked:
+                print(f"  @{h}")
+            return
+
+        for raw in raw_handles:
+            handle = normalize_handle(raw)
+            if handle is None:
+                print(f"{RED}✗{RESET} {raw}: not a valid handle")
+                continue
+            if action == "add":
+                if await store.add_handle(handle):
+                    print(f"{GREEN}✓{RESET} @{handle} added")
+                else:
+                    print(f"{DIM}-{RESET} @{handle} already tracked")
+            else:
+                if await store.remove_handle(handle):
+                    print(f"{GREEN}✓{RESET} @{handle} removed")
+                else:
+                    print(f"{RED}✗{RESET} @{handle} was not tracked")
+    finally:
+        await store.close()
+
+
+async def cmd_accounts_add(username: str, cookies: str) -> None:
+    cfg = Config.load(require_discord=False)
+    _setup_logging(cfg)
+    api = API(str(cfg.accounts_db))
+    await api.pool.add_account_cookies(username, cookies)
+    print(f"{GREEN}✓{RESET} account @{username} added to the pool")
+
+
+async def cmd_accounts_list() -> None:
+    cfg = Config.load(require_discord=False)
+    _setup_logging(cfg)
+    api = API(str(cfg.accounts_db))
+    infos = await api.pool.accounts_info()
+    if not infos:
+        print("No accounts in the pool.")
+        return
+
+    headers = ("username", "active", "logged_in", "last_used", "total_req", "error")
+    rows = [
+        (
+            x["username"],
+            "yes" if x["active"] else "no",
+            "yes" if x["logged_in"] else "no",
+            x["last_used"].strftime("%Y-%m-%d %H:%M") if x["last_used"] else "-",
+            str(x["total_req"]),
+            x["error_msg"] or "",
+        )
+        for x in infos
+    ]
+    widths = [max(len(h), *(len(r[i]) for r in rows)) for i, h in enumerate(headers)]
+
+    print(BOLD + "  ".join(h.ljust(w) for h, w in zip(headers, widths, strict=True)) + RESET)
+    for row in rows:
+        cells = [cell.ljust(w) for cell, w in zip(row, widths, strict=True)]
+        ok = row[1] == "yes"
+        cells[1] = f"{GREEN if ok else RED}{cells[1]}{RESET}"
+        print("  ".join(cells))
+
+
+async def cmd_stats() -> None:
+    cfg = Config.load(require_discord=False)
+    store = await Store.open(cfg.db_path)
+    try:
+        s = await store.stats()
+        print(f"{BOLD}tracked{RESET}      {s['tracked']}")
+        print(f"{BOLD}posts{RESET}        {s['posts']}")
+        print(f"{BOLD}last_posted{RESET}  {s['last_posted'] or '-'}")
+    finally:
+        await store.close()
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="gifharvest",
+        description="Scrape GIFs from tracked X accounts and repost them to Discord.",
+    )
+    sub = parser.add_subparsers(dest="command")
+
+    sub.add_parser("run", help="run the Discord bot with the background poll loop (default)")
+
+    p_scrape = sub.add_parser("scrape", help="dry-run one scrape cycle without Discord")
+    p_scrape.add_argument(
+        "--mark-seen",
+        action="store_true",
+        help="mark found candidates as seen so the bot never posts them",
+    )
+
+    p_track = sub.add_parser("track", help="manage tracked handles")
+    track_sub = p_track.add_subparsers(dest="track_command", required=True)
+    track_sub.add_parser("add", help="track handles").add_argument("handles", nargs="+")
+    track_sub.add_parser("remove", help="untrack handles").add_argument("handles", nargs="+")
+    track_sub.add_parser("list", help="list tracked handles")
+
+    p_acc = sub.add_parser("accounts", help="manage twscrape donor accounts")
+    acc_sub = p_acc.add_subparsers(dest="accounts_command", required=True)
+    p_acc_add = acc_sub.add_parser("add", help="add a donor account via cookies")
+    p_acc_add.add_argument("username")
+    p_acc_add.add_argument(
+        "--cookies",
+        required=True,
+        help='cookie string, e.g. "auth_token=...; ct0=..."',
+    )
+    acc_sub.add_parser("list", help="list pool accounts")
+
+    sub.add_parser("stats", help="show database stats")
+    return parser
+
+
+def main() -> None:
+    args = _build_parser().parse_args()
+    command = args.command or "run"
+
+    match command:
+        case "run":
+            with contextlib.suppress(KeyboardInterrupt):
+                asyncio.run(cmd_run())
+        case "scrape":
+            asyncio.run(cmd_scrape(args.mark_seen))
+        case "track":
+            asyncio.run(cmd_track(args.track_command, getattr(args, "handles", [])))
+        case "accounts":
+            if args.accounts_command == "add":
+                asyncio.run(cmd_accounts_add(args.username, args.cookies))
+            else:
+                asyncio.run(cmd_accounts_list())
+        case "stats":
+            asyncio.run(cmd_stats())
