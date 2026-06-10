@@ -1,16 +1,16 @@
 # systemd user unit. Install:
 #   mkdir -p ~/.config/systemd/user
-#   cp deploy/gifharvest.service ~/.config/systemd/user/
+#   cp deploy/gifgoblin.service ~/.config/systemd/user/
 #   systemctl --user daemon-reload
-#   systemctl --user enable --now gifharvest
+#   systemctl --user enable --now gifgoblin
 
 [Unit]
-Description=gifharvest - X/Twitter GIF scraper to Discord
+Description=gifgoblin - X/Twitter GIF scraper to Discord
 After=network-online.target
 Wants=network-online.target
 
 [Service]
-WorkingDirectory=%h/TwitterGIFharvest
+WorkingDirectory=%h/gifgoblin
 ExecStart=%h/.local/bin/uv run gifharvest run
 Restart=on-failure
 RestartSec=10

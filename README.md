@@ -1,12 +1,12 @@
-# gifharvest
+# gifgoblin
 
-Scrapes GIFs from a tracked list of shitpost X/Twitter accounts and reposts them to a Discord channel. Never posts the same thing twice.
+Scrapes GIFs from a tracked list of shitpost X/Twitter accounts and reposts them to a Discord channel. Never posts the same thing twice. (The Python package and CLI command are still `gifharvest` — only the product/repo name is gifgoblin.)
 
-Repo: https://github.com/Codeptor/TwitterGIFharvest
+Repo: https://github.com/Codeptor/gifgoblin
 
 ## How it works
 
-A background loop polls every `POLL_MINUTES`. Each tracked handle is scraped via [twscrape](https://github.com/vladkens/twscrape) using cookie-authenticated donor X accounts. X stores "GIFs" as looping mp4s (`animated_gif` media) — those are picked out of each tweet (plain videos and retweets are opt-in via `INCLUDE_VIDEOS` / `INCLUDE_RETWEETS`). A SQLite store dedupes by both tweet id and media URL, so retweets and reposts of an already-seen GIF are skipped. New candidates are posted to `GIF_CHANNEL_ID` as an mp4 upload captioned `@author · <tweet link>`; files over the guild upload limit fall back to a `d.fxtwitter.com` embed link. With `CONVERT_TO_GIF=true` the mp4 is converted to a real `.gif` via ffmpeg (two-pass palette), falling back to the mp4 if ffmpeg is unavailable or the gif exceeds the upload limit. The first scrape of a newly tracked handle posts only the newest `BACKFILL_COUNT` and marks the rest seen, so adding a handle doesn't flood the channel.
+A background loop polls every `POLL_MINUTES`. Each tracked handle is scraped via [twscrape](https://github.com/vladkens/twscrape) using cookie-authenticated donor X accounts. X stores "GIFs" as looping mp4s (`animated_gif` media) — those are picked out of each tweet (plain videos and retweets are opt-in via `INCLUDE_VIDEOS` / `INCLUDE_RETWEETS`). A SQLite store dedupes by both tweet id and media URL, so retweets and reposts of an already-seen GIF are skipped. New candidates are posted to `GIF_CHANNEL_ID` captioned `@author · <tweet link>`. By default (`CONVERT_TO_GIF=true`) each mp4 is converted to a real autoplaying, looping `.gif` via ffmpeg (two-pass palette), scaled so its longest side fits within `GIF_MAX_WIDTH` (fit-in-box, never upscaled); if ffmpeg is missing or the converted gif exceeds the guild upload limit, the bot automatically falls back to uploading the mp4. Set `CONVERT_TO_GIF=false` to post raw mp4s instead. Files over the guild upload limit fall back to a `d.fxtwitter.com` embed link. The first scrape of a newly tracked handle posts only the newest `BACKFILL_COUNT` and marks the rest seen, so adding a handle doesn't flood the channel.
 
 ## Setup
 
@@ -79,13 +79,13 @@ uv run gifharvest stats                                # store stats
 
 ## Running as a service (systemd)
 
-A user unit is provided in `deploy/gifharvest.service`:
+A user unit is provided in `deploy/gifgoblin.service`. It expects the repo cloned at `~/gifgoblin` (the default directory of a fresh `git clone https://github.com/Codeptor/gifgoblin`):
 
 ```sh
 mkdir -p ~/.config/systemd/user
-cp deploy/gifharvest.service ~/.config/systemd/user/
+cp deploy/gifgoblin.service ~/.config/systemd/user/
 systemctl --user daemon-reload
-systemctl --user enable --now gifharvest
+systemctl --user enable --now gifgoblin
 ```
 
-Logs: `journalctl --user -u gifharvest -f`. For the service to run while you are logged out: `loginctl enable-linger $USER`.
+Logs: `journalctl --user -u gifgoblin -f`. For the service to run while you are logged out: `loginctl enable-linger $USER`.
