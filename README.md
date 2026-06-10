@@ -89,3 +89,20 @@ systemctl --user enable --now gifgoblin
 ```
 
 Logs: `journalctl --user -u gifgoblin -f`. For the service to run while you are logged out: `loginctl enable-linger $USER`.
+
+## Running with Docker
+
+Docker Compose runs the bot with ffmpeg included, using your local `.env` and `data/` directory for secrets and state:
+
+```sh
+cp .env.example .env
+# fill DISCORD_TOKEN, GIF_CHANNEL_ID, GUILD_ID, and add donor cookies locally
+docker compose up -d --build
+docker compose logs -f gifgoblin
+```
+
+Stop it with:
+
+```sh
+docker compose down
+```
