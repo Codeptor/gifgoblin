@@ -84,7 +84,9 @@ def test_gif_ffmpeg_args():
     assert args[args.index("-i") + 1] == "/tmp/in.mp4"
     assert args[args.index("-loop") + 1] == "0"
     vf = args[args.index("-vf") + 1]
-    assert vf.startswith("fps=15,scale='min(480,iw)':-2:flags=lanczos,")
+    assert vf.startswith("fps=15,")
+    assert "scale='min(iw,480)':'min(ih,480)'" in vf
+    assert "force_original_aspect_ratio=decrease" in vf
     assert "palettegen=stats_mode=diff" in vf
     assert "paletteuse=dither=bayer:bayer_scale=4" in vf
 

@@ -35,7 +35,8 @@ async def fetch_media(client: httpx.AsyncClient, url: str, max_bytes: int) -> Do
 
 def gif_ffmpeg_args(src: str, dst: str, *, fps: int, max_width: int) -> list[str]:
     vf = (
-        f"fps={fps},scale='min({max_width},iw)':-2:flags=lanczos,"
+        f"fps={fps},scale='min(iw,{max_width})':'min(ih,{max_width})'"
+        ":force_original_aspect_ratio=decrease:flags=lanczos,"
         "split[s0][s1];[s0]palettegen=stats_mode=diff[p];"
         "[s1][p]paletteuse=dither=bayer:bayer_scale=4"
     )

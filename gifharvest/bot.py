@@ -26,7 +26,11 @@ _POST_PAUSE_SECONDS = 1.5
 
 class GifHarvestBot(commands.Bot):
     def __init__(self, cfg: Config, store: Store, scraper: TwitterScraper):
-        super().__init__(command_prefix=commands.when_mentioned, intents=discord.Intents.default())
+        super().__init__(
+            command_prefix=commands.when_mentioned,
+            intents=discord.Intents.default(),
+            activity=discord.CustomActivity(name="harvesting gifs"),
+        )
         self.cfg = cfg
         self.store = store
         self.scraper = scraper

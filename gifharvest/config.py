@@ -63,7 +63,7 @@ class Config:
             backfill_count=_as_int(os.getenv("BACKFILL_COUNT"), 3),
             include_retweets=_as_bool(os.getenv("INCLUDE_RETWEETS"), False),
             include_videos=_as_bool(os.getenv("INCLUDE_VIDEOS"), False),
-            convert_to_gif=_as_bool(os.getenv("CONVERT_TO_GIF"), False),
+            convert_to_gif=_as_bool(os.getenv("CONVERT_TO_GIF"), True),
             max_upload_bytes=_as_int(os.getenv("MAX_UPLOAD_BYTES"), 0),
             gif_fps=_as_int(os.getenv("GIF_FPS"), 15),
             gif_max_width=_as_int(os.getenv("GIF_MAX_WIDTH"), 480),

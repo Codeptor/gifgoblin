@@ -45,7 +45,7 @@ def test_defaults_without_discord():
     assert cfg.backfill_count == 3
     assert cfg.include_retweets is False
     assert cfg.include_videos is False
-    assert cfg.convert_to_gif is False
+    assert cfg.convert_to_gif is True
     assert cfg.max_upload_bytes == 0
     assert cfg.gif_fps == 15
     assert cfg.gif_max_width == 480
