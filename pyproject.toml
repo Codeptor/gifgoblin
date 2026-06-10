@@ -1,0 +1,38 @@
+[project]
+name = "gifharvest"
+version = "0.1.0"
+description = "Scrape GIFs from shitpost X/Twitter accounts and repost them to a Discord channel"
+requires-python = ">=3.11"
+dependencies = [
+    "discord.py>=2.4",
+    "twscrape>=0.13",
+    "aiosqlite>=0.20",
+    "httpx>=0.27",
+    "python-dotenv>=1.0",
+]
+
+[project.scripts]
+gifharvest = "gifharvest.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.8",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
