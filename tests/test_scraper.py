@@ -254,8 +254,7 @@ def test_parse_tweet_url_rejects(raw: str):
 
 def test_parse_tweet_urls_extracts_links_from_chat_text():
     assert parse_tweet_urls(
-        "check this https://x.com/foo/status/123?s=20 and "
-        "https://fxtwitter.com/bar/status/456"
+        "check this https://x.com/foo/status/123?s=20 and https://fxtwitter.com/bar/status/456"
     ) == [123, 456]
 
 

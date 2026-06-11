@@ -13,6 +13,7 @@ from twscrape import API, NoAccountError, set_log_level
 from .config import Config
 from .db import Store
 from .scraper import TwitterScraper, normalize_handle
+from .twpatch import apply_xclid_fallback
 
 BOLD = "\033[1m"
 DIM = "\033[2m"
@@ -37,6 +38,8 @@ def _open_api(cfg: Config, **kwargs) -> API:
     # twscrape opens its pool db with a bare sqlite connect and never creates
     # the parent directory — a fresh clone would crash on `accounts add`
     cfg.accounts_db.parent.mkdir(parents=True, exist_ok=True)
+    # tolerate twscrape's broken x-client-transaction-id generation (see twpatch)
+    apply_xclid_fallback()
     return API(str(cfg.accounts_db), **kwargs)
 
 
@@ -225,10 +228,7 @@ async def cmd_accounts_browser_refresh(
         sys.exit(1)
 
     if headless:
-        print(
-            f"{DIM}Headless mode only works if this browser profile is already logged in."
-            f"{RESET}"
-        )
+        print(f"{DIM}Headless mode only works if this browser profile is already logged in.{RESET}")
 
     cfg = Config.load(require_discord=False)
     _setup_logging(cfg)
