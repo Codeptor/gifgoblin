@@ -41,6 +41,13 @@ _STATUS_URL_RE = re.compile(
 )
 
 
+def _has_relogin_credentials(account: Any) -> bool:
+    return all(
+        getattr(account, field, None) not in {None, "", "_"}
+        for field in ("password", "email", "email_password")
+    )
+
+
 def parse_tweet_url(raw: str) -> int | None:
     text = raw.strip()
     if text.isdigit():
@@ -144,17 +151,31 @@ class TwitterScraper:
 
     async def account_health(self) -> dict[str, int | list[str]]:
         infos = await self._api.pool.accounts_info()
+        accounts = {x.username: x for x in await self._api.pool.get_all()}
         errors = sorted(
             x["username"]
             for x in infos
             if not x.get("active") or not x.get("logged_in") or x.get("error_msg")
+        )
+        reloginable = sorted(
+            username
+            for username in errors
+            if username in accounts and _has_relogin_credentials(accounts[username])
         )
         return {
             "total": len(infos),
             "active": sum(1 for x in infos if x.get("active")),
             "logged_in": sum(1 for x in infos if x.get("logged_in")),
             "errors": errors,
+            "reloginable": reloginable,
         }
+
+    async def relogin_unhealthy_accounts(self) -> dict[str, int | list[str]]:
+        health = await self.account_health()
+        usernames = [str(x) for x in health["reloginable"]]
+        if usernames:
+            await self._api.pool.relogin(usernames)
+        return await self.account_health()
 
     async def fetch_tweet(self, tweet_id: int) -> list[GifCandidate] | None:
         """Every gif/video on one explicitly requested tweet, or None when unfetchable.

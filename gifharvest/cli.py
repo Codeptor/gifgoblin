@@ -148,6 +148,11 @@ def _read_cookies() -> str:
     return sys.stdin.read().strip()
 
 
+def _read_optional(prompt: str, *, secret: bool = False) -> str | None:
+    value = getpass.getpass(prompt).strip() if secret else input(prompt).strip()
+    return value or None
+
+
 async def cmd_accounts_add(username: str, cookies: str | None) -> None:
     cfg = Config.load(require_discord=False)
     _setup_logging(cfg)
@@ -165,6 +170,44 @@ async def cmd_accounts_add(username: str, cookies: str | None) -> None:
     await api.pool.add_account_cookies(username, cookies)
     verb = "cookies refreshed" if existing is not None else "added to the pool"
     print(f"{GREEN}✓{RESET} account @{username} {verb}")
+
+
+async def cmd_accounts_credentials(username: str, login_now: bool) -> None:
+    cfg = Config.load(require_discord=False)
+    _setup_logging(cfg)
+    print(
+        "These credentials are stored in accounts.db for automated twscrape relogin.\n"
+        "Use a burner X account and an email app-password, not your main password."
+    )
+    password = _read_optional("X password: ", secret=True)
+    email = _read_optional("Email address for X verification codes: ")
+    email_password = _read_optional("Email IMAP/app password: ", secret=True)
+    mfa_code = _read_optional("TOTP seed/base32 secret (optional): ", secret=True)
+    proxy = _read_optional("Proxy URL (optional): ")
+
+    if not password or not email or not email_password:
+        print(
+            f"{RED}✗{RESET} X password, email, and email IMAP/app password are required.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    api = _open_api(cfg)
+    existing = await api.pool.get_account(username)
+    if existing is not None:
+        await api.pool.delete_accounts(username)
+    await api.pool.add_account(
+        username=username,
+        password=password,
+        email=email,
+        email_password=email_password,
+        proxy=proxy,
+        mfa_code=mfa_code,
+    )
+    print(f"{GREEN}✓{RESET} stored login credentials for @{username}")
+
+    if login_now:
+        await cmd_accounts_relogin([username])
 
 
 async def cmd_accounts_browser_refresh(
@@ -231,6 +274,25 @@ async def cmd_accounts_browser_refresh(
         sys.exit(1)
 
     await cmd_accounts_add(username, f"auth_token={auth_token}; ct0={ct0}")
+
+
+async def cmd_accounts_relogin(usernames: list[str]) -> None:
+    cfg = Config.load(require_discord=False)
+    _setup_logging(cfg)
+    api = _open_api(cfg)
+    if usernames:
+        print(f"Relogging: {', '.join('@' + x for x in usernames)}")
+        await api.pool.relogin(usernames)
+    else:
+        scraper = TwitterScraper(api, cfg)
+        health = await scraper.account_health()
+        reloginable = [str(x) for x in health["reloginable"]]
+        if not reloginable:
+            print("No unhealthy donor accounts with stored credentials found.")
+            return
+        print(f"Relogging unhealthy account(s): {', '.join('@' + x for x in reloginable)}")
+        await api.pool.relogin(reloginable)
+    await cmd_accounts_list()
 
 
 async def cmd_accounts_list() -> None:
@@ -307,6 +369,19 @@ def _build_parser() -> argparse.ArgumentParser:
         help='cookie string, e.g. "auth_token=...; ct0=..." (omit to enter it '
         "at a hidden prompt or pipe it via stdin)",
     )
+    p_acc_credentials = acc_sub.add_parser(
+        "credentials", help="store full burner credentials for automated relogin"
+    )
+    p_acc_credentials.add_argument("username")
+    p_acc_credentials.add_argument(
+        "--login-now",
+        action="store_true",
+        help="run twscrape relogin immediately after storing credentials",
+    )
+    p_acc_relogin = acc_sub.add_parser(
+        "relogin", help="run twscrape relogin for usernames, or unhealthy accounts"
+    )
+    p_acc_relogin.add_argument("usernames", nargs="*")
     p_acc_refresh = acc_sub.add_parser(
         "browser-refresh", help="refresh cookies from a manual X browser login"
     )
@@ -341,6 +416,10 @@ def main() -> None:
         case "accounts":
             if args.accounts_command == "add":
                 asyncio.run(cmd_accounts_add(args.username, args.cookies))
+            elif args.accounts_command == "credentials":
+                asyncio.run(cmd_accounts_credentials(args.username, args.login_now))
+            elif args.accounts_command == "relogin":
+                asyncio.run(cmd_accounts_relogin(args.usernames))
             elif args.accounts_command == "browser-refresh":
                 asyncio.run(
                     cmd_accounts_browser_refresh(args.username, args.profile_dir, args.headless)

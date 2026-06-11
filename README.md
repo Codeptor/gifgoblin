@@ -67,9 +67,33 @@ uv run gifharvest run                                  # start the Discord bot +
 uv run gifharvest scrape [--mark-seen]                 # dry-run scrape; --mark-seen marks results seen
 uv run gifharvest track add|remove|list [<handles>]    # manage tracked handles
 uv run gifharvest accounts add <user> [--cookies ...]  # add/refresh a donor X account (cookies prompted if omitted)
+uv run gifharvest accounts credentials <user>          # store burner login/email creds for automated relogin
+uv run gifharvest accounts relogin [<user> ...]        # rerun twscrape's X login flow
 uv run gifharvest accounts browser-refresh <user>      # open a browser, log into X, extract auth_token/ct0
 uv run gifharvest accounts list                        # show donor account pool
 uv run gifharvest stats                                # store stats
+```
+
+For the most automated path, store **burner-only** credentials once:
+
+```sh
+uv run gifharvest accounts credentials <burner_username> --login-now
+```
+
+This stores the X password, verification email, email IMAP/app-password, optional
+TOTP seed, and optional proxy in `data/accounts.db`. After that, cookie expiry can
+usually be repaired on the VPS with:
+
+```sh
+uv run gifharvest accounts relogin <burner_username>
+```
+
+In Docker on the VPS:
+
+```sh
+cd /home/deploy/bots/gifgoblin
+docker compose exec -it gifgoblin gifharvest accounts credentials <burner_username> --login-now
+docker compose exec -T gifgoblin gifharvest accounts list
 ```
 
 `accounts browser-refresh` uses a Playwright Chromium profile under
@@ -92,8 +116,10 @@ docker compose run --rm -i gifgoblin gifharvest accounts add <burner_username>
 ```
 
 The bot checks donor account health after each poll. If a donor is inactive or
-`logged_in=no`, it sends a one-time warning to `ALERT_CHANNEL_ID` (or
-`GIF_CHANNEL_ID` when unset), then sends a recovery message once health returns.
+`logged_in=no`, it first tries `twscrape` relogin once for accounts with stored
+credentials. If automated recovery fails or no stored credentials exist, it sends
+a one-time warning to `ALERT_CHANNEL_ID` (or `GIF_CHANNEL_ID` when unset), then
+sends a recovery message once health returns.
 
 ## Slash commands
 

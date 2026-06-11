@@ -24,6 +24,7 @@ DEFAULT_UPLOAD_LIMIT = 10 * 1024 * 1024
 
 _POST_PAUSE_SECONDS = 1.5
 _DONOR_ALERT_SETTING = "donor_account_alert_state"
+_DONOR_RELOGIN_SETTING = "donor_account_relogin_state"
 
 
 def _format_timestamp(raw: str | None) -> str:
@@ -70,6 +71,9 @@ def _format_account_health(health: dict[str, int | list[str]]) -> str:
         if len(errors) > 5:
             visible += f", +{len(errors) - 5} more"
         summary += f" - check {visible}"
+    reloginable = [str(x) for x in health.get("reloginable", [])]
+    if reloginable:
+        summary += f" - auto-relogin available for {len(reloginable)}"
     return summary
 
 
@@ -82,11 +86,13 @@ def _donor_alert_state(health: dict[str, int | list[str]]) -> tuple[str, str | N
         return "none", "No X donor accounts are configured. Add one with `gifharvest accounts add`."
     if errors or logged_in < total or active < total:
         bad = ", ".join(f"@{x}" for x in errors) if errors else "unknown account"
+        reloginable = ",".join(str(x) for x in health.get("reloginable", []))
         return (
-            f"bad:{total}:{active}:{logged_in}:{','.join(errors)}",
+            f"bad:{total}:{active}:{logged_in}:{','.join(errors)}:{reloginable}",
             f"X donor account needs refresh: {bad}. "
             f"Health is {active}/{total} active, {logged_in}/{total} logged in. "
-            "Refresh cookies with `gifharvest accounts browser-refresh <username>`.",
+            "Run `gifharvest accounts relogin <username>` if credentials are stored, "
+            "or refresh cookies with `gifharvest accounts browser-refresh <username>`.",
         )
     return "ok", None
 
@@ -225,6 +231,16 @@ class GifHarvestBot(commands.Bot):
         try:
             health = await self.scraper.account_health()
             state, message = _donor_alert_state(health)
+            reloginable = [str(x) for x in health.get("reloginable", [])]
+            relogin_state = await self.store.get_setting(_DONOR_RELOGIN_SETTING)
+            if self.cfg.auto_relogin and message and reloginable and relogin_state != state:
+                log.warning("attempting automatic X relogin for: %s", ", ".join(reloginable))
+                health = await self.scraper.relogin_unhealthy_accounts()
+                await self.store.set_setting(_DONOR_RELOGIN_SETTING, state)
+                state, message = _donor_alert_state(health)
+                if message:
+                    message = f"Automated X relogin failed. {message}"
+
             previous = await self.store.get_setting(_DONOR_ALERT_SETTING)
             if state == previous:
                 return
