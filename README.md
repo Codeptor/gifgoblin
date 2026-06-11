@@ -79,6 +79,11 @@ uv run gifharvest stats                                # store stats
 - `/status` — show tracked accounts, poll timing, latest GIF, total posts, donor account health, and polling interval (Manage Guild)
 - `/harveststats` — store stats
 
+To post GIFs when someone simply pastes a tweet link in chat, enable
+`MESSAGE_LINKS_ENABLED=true` and turn on **Message Content Intent** for the bot in
+the Discord Developer Portal. Without that portal setting, Discord does not send
+message text to the bot.
+
 ## Running as a service (systemd)
 
 A user unit is provided in `deploy/gifgoblin.service`. It expects the repo cloned at `~/gifgoblin` (the default directory of a fresh `git clone https://github.com/Codeptor/gifgoblin`):

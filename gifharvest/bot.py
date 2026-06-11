@@ -16,7 +16,7 @@ from .config import Config
 from .db import Store
 from .downloader import convert_to_gif, fetch_media
 from .models import GifCandidate, MediaKind
-from .scraper import TwitterScraper, normalize_handle, parse_tweet_url, plan_posts
+from .scraper import TwitterScraper, normalize_handle, parse_tweet_url, parse_tweet_urls, plan_posts
 
 log = logging.getLogger(__name__)
 
@@ -74,9 +74,12 @@ def _format_account_health(health: dict[str, int | list[str]]) -> str:
 
 class GifHarvestBot(commands.Bot):
     def __init__(self, cfg: Config, store: Store, scraper: TwitterScraper):
+        intents = discord.Intents.default()
+        if cfg.message_links_enabled:
+            intents.message_content = True
         super().__init__(
             command_prefix=commands.when_mentioned,
-            intents=discord.Intents.default(),
+            intents=intents,
             activity=discord.CustomActivity(name="harvesting gifs"),
         )
         self.cfg = cfg
@@ -221,6 +224,64 @@ class GifHarvestBot(commands.Bot):
             await self.store.mark_tweet_seen(tweet_id)
         return posted, errors
 
+    async def post_tweet_link(self, tweet_id: int) -> str:
+        try:
+            candidates = await self.scraper.fetch_tweet(tweet_id)
+        except NoAccountError:
+            if await self.scraper.has_active_accounts():
+                return "All donor accounts are rate-limited - try again in a few minutes."
+            return (
+                "No donor X account configured - add or refresh one with "
+                "`gifharvest accounts add`."
+            )
+
+        if candidates is None:
+            channel, _ = await self._channel_and_limit()
+            await channel.send(
+                f"https://d.fxtwitter.com/i/status/{tweet_id}",
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
+            return (
+                "I could not fetch media directly from X, so I posted the fxtwitter "
+                f"fallback link to <#{self.cfg.channel_id}>."
+            )
+        if not candidates:
+            return "That tweet has no gif or video."
+
+        posted, errors = await self.post_now(candidates)
+        summary = f"Posted {posted} item(s) to <#{self.cfg.channel_id}>."
+        if errors:
+            summary += f" {errors} failed - check the logs."
+        return summary
+
+    async def on_message(self, message: discord.Message) -> None:
+        await self.process_commands(message)
+        if (
+            not self.cfg.message_links_enabled
+            or message.author.bot
+            or not message.guild
+            or not message.content
+        ):
+            return
+
+        tweet_ids = parse_tweet_urls(message.content)
+        if not tweet_ids:
+            return
+
+        summaries: list[str] = []
+        for tweet_id in tweet_ids[:3]:
+            summaries.append(await self.post_tweet_link(tweet_id))
+        if len(tweet_ids) > 3:
+            summaries.append(f"Skipped {len(tweet_ids) - 3} extra link(s).")
+
+        has_failure = any("failed" in s.lower() for s in summaries)
+        if message.channel.id != self.cfg.channel_id or has_failure:
+            await message.reply(
+                "\n".join(summaries),
+                mention_author=False,
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
+
     async def _post(self, channel, c: GifCandidate, limit: int) -> None:
         dl = await fetch_media(self.http_client, c.media_url, limit)
         caption = f"**@{c.author}**"
@@ -347,31 +408,7 @@ class HarvestCog(commands.Cog):
             )
             return
         await interaction.response.defer(ephemeral=True, thinking=True)
-        try:
-            candidates = await self.bot.scraper.fetch_tweet(tweet_id)
-        except NoAccountError:
-            if await self.bot.scraper.has_active_accounts():
-                message = "All donor accounts are rate-limited — try again in a few minutes."
-            else:
-                message = (
-                    "No donor X account configured — add one with "
-                    "`gifharvest accounts add` (see README)."
-                )
-            await interaction.followup.send(message, ephemeral=True)
-            return
-        if candidates is None:
-            await interaction.followup.send(
-                "Couldn't fetch that tweet — deleted, protected, or X hiccuped.",
-                ephemeral=True,
-            )
-            return
-        if not candidates:
-            await interaction.followup.send("That tweet has no gif or video.", ephemeral=True)
-            return
-        posted, errors = await self.bot.post_now(candidates)
-        summary = f"Posted {posted} item(s) to <#{self.bot.cfg.channel_id}>."
-        if errors:
-            summary += f" {errors} failed — check the logs."
+        summary = await self.bot.post_tweet_link(tweet_id)
         await interaction.followup.send(summary, ephemeral=True)
 
     @app_commands.command(name="harveststats", description="Show harvest stats")

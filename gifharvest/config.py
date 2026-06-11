@@ -35,6 +35,7 @@ class Config:
     backfill_count: int
     include_retweets: bool
     include_videos: bool
+    message_links_enabled: bool
     convert_to_gif: bool
     max_upload_bytes: int  # 0 = auto-detect from the guild's boost tier
     gif_fps: int
@@ -63,6 +64,7 @@ class Config:
             backfill_count=_as_int(os.getenv("BACKFILL_COUNT"), 3),
             include_retweets=_as_bool(os.getenv("INCLUDE_RETWEETS"), False),
             include_videos=_as_bool(os.getenv("INCLUDE_VIDEOS"), False),
+            message_links_enabled=_as_bool(os.getenv("MESSAGE_LINKS_ENABLED"), False),
             convert_to_gif=_as_bool(os.getenv("CONVERT_TO_GIF"), True),
             max_upload_bytes=_as_int(os.getenv("MAX_UPLOAD_BYTES"), 0),
             gif_fps=_as_int(os.getenv("GIF_FPS"), 15),

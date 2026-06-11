@@ -49,6 +49,21 @@ def parse_tweet_url(raw: str) -> int | None:
     return int(match.group(1)) if match else None
 
 
+def parse_tweet_urls(raw: str) -> list[int]:
+    seen: set[int] = set()
+    tweet_ids: list[int] = []
+    for match in _STATUS_URL_RE.finditer(raw):
+        tweet_id = int(match.group(1))
+        if tweet_id not in seen:
+            seen.add(tweet_id)
+            tweet_ids.append(tweet_id)
+    if not tweet_ids:
+        tweet_id = parse_tweet_url(raw)
+        if tweet_id is not None:
+            tweet_ids.append(tweet_id)
+    return tweet_ids
+
+
 def extract_candidates(
     tweet: Any,
     tracked_handle: str,

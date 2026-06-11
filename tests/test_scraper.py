@@ -13,6 +13,7 @@ from gifharvest.scraper import (
     extract_candidates,
     normalize_handle,
     parse_tweet_url,
+    parse_tweet_urls,
     plan_posts,
 )
 
@@ -249,6 +250,13 @@ def test_parse_tweet_url_accepts(raw: str, expected: int):
 )
 def test_parse_tweet_url_rejects(raw: str):
     assert parse_tweet_url(raw) is None
+
+
+def test_parse_tweet_urls_extracts_links_from_chat_text():
+    assert parse_tweet_urls(
+        "check this https://x.com/foo/status/123?s=20 and "
+        "https://fxtwitter.com/bar/status/456"
+    ) == [123, 456]
 
 
 async def test_fetch_tweet_includes_videos_despite_optin_flags():

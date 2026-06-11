@@ -15,6 +15,7 @@ ENV_VARS = (
     "BACKFILL_COUNT",
     "INCLUDE_RETWEETS",
     "INCLUDE_VIDEOS",
+    "MESSAGE_LINKS_ENABLED",
     "CONVERT_TO_GIF",
     "MAX_UPLOAD_BYTES",
     "GIF_FPS",
@@ -45,6 +46,7 @@ def test_defaults_without_discord():
     assert cfg.backfill_count == 3
     assert cfg.include_retweets is False
     assert cfg.include_videos is False
+    assert cfg.message_links_enabled is False
     assert cfg.convert_to_gif is True
     assert cfg.max_upload_bytes == 0
     assert cfg.gif_fps == 15
