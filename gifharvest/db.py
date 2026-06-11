@@ -155,3 +155,24 @@ class Store:
         async with self._db.execute("SELECT COUNT(*), MAX(posted_at) FROM posts") as cur:
             posts, last_posted = await cur.fetchone()
         return {"tracked": tracked, "posts": posts, "last_posted": last_posted}
+
+    async def latest_post(self) -> dict[str, int | str] | None:
+        async with self._db.execute(
+            "SELECT tweet_id, author, tracked_handle, media_url, posted_at "
+            "FROM posts ORDER BY posted_at DESC LIMIT 1"
+        ) as cur:
+            row = await cur.fetchone()
+        if row is None:
+            return None
+        tweet_id, author, tracked_handle, media_url, posted_at = row
+        return {
+            "tweet_id": tweet_id,
+            "author": author,
+            "tracked_handle": tracked_handle,
+            "media_url": media_url,
+            "posted_at": posted_at,
+            "tweet_url": f"https://x.com/{author}/status/{tweet_id}",
+        }
+
+    async def mark_poll_completed(self) -> None:
+        await self.set_setting("last_poll_completed_at", _now())

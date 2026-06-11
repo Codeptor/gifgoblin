@@ -111,6 +111,20 @@ class TwitterScraper:
         stats = await self._api.pool.stats()
         return stats.get("active", 0) > 0
 
+    async def account_health(self) -> dict[str, int | list[str]]:
+        infos = await self._api.pool.accounts_info()
+        errors = sorted(
+            x["username"]
+            for x in infos
+            if not x.get("active") or not x.get("logged_in") or x.get("error_msg")
+        )
+        return {
+            "total": len(infos),
+            "active": sum(1 for x in infos if x.get("active")),
+            "logged_in": sum(1 for x in infos if x.get("logged_in")),
+            "errors": errors,
+        }
+
     async def fetch_new(self, store: Store, handle: str) -> list[GifCandidate] | None:
         """Return new candidates for a handle, or None when resolution failed."""
         uid = await self.resolve_user_id(store, handle)

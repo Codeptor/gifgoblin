@@ -75,6 +75,7 @@ uv run gifharvest stats                                # store stats
 
 - `/track add|remove|list` — manage tracked handles (requires Manage Guild; Discord applies group permissions to all subcommands)
 - `/scan` — trigger an immediate scrape (Manage Guild)
+- `/status` — show tracked accounts, poll timing, latest GIF, total posts, donor account health, and polling interval (Manage Guild)
 - `/harveststats` — store stats
 
 ## Running as a service (systemd)

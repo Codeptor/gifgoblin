@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import io
 import logging
+from datetime import UTC, datetime
 from pathlib import PurePosixPath
 
 import discord
@@ -22,6 +23,53 @@ log = logging.getLogger(__name__)
 DEFAULT_UPLOAD_LIMIT = 10 * 1024 * 1024
 
 _POST_PAUSE_SECONDS = 1.5
+
+
+def _format_timestamp(raw: str | None) -> str:
+    if not raw:
+        return "never"
+    try:
+        dt = datetime.fromisoformat(raw)
+    except ValueError:
+        return raw
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
+    return f"<t:{int(dt.timestamp())}:R>"
+
+
+def _format_handles(handles: list[str]) -> str:
+    if not handles:
+        return "none"
+    visible = ", ".join(f"@{h}" for h in handles[:20])
+    if len(handles) > 20:
+        visible += f", +{len(handles) - 20} more"
+    return visible
+
+
+def _format_latest_post(latest: dict[str, int | str] | None) -> str:
+    if latest is None:
+        return "never"
+    return (
+        f"@{latest['author']} via @{latest['tracked_handle']} "
+        f"{_format_timestamp(str(latest['posted_at']))} - <{latest['tweet_url']}>"
+    )
+
+
+def _format_account_health(health: dict[str, int | list[str]]) -> str:
+    total = int(health["total"])
+    if total == 0:
+        return "0 configured"
+
+    active = int(health["active"])
+    logged_in = int(health["logged_in"])
+    errors = [str(x) for x in health["errors"]]
+    summary = f"{active}/{total} active, {logged_in}/{total} logged in"
+    if errors:
+        visible = ", ".join(f"@{x}" for x in errors[:5])
+        if len(errors) > 5:
+            visible += f", +{len(errors) - 5} more"
+        summary += f" - check {visible}"
+    return summary
 
 
 class GifHarvestBot(commands.Bot):
@@ -143,6 +191,7 @@ class GifHarvestBot(commands.Bot):
                     await self.store.mark_tweet_seen(tweet_id)
                 await self.store.mark_scraped(handle)
 
+            await self.store.mark_poll_completed()
             return {"handles": len(handles), "posted": posted, "errors": errors}
 
     async def _post(self, channel, c: GifCandidate, limit: int) -> None:
@@ -267,5 +316,25 @@ class HarvestCog(commands.Cog):
             f"Tracked accounts: **{stats['tracked']}**\n"
             f"GIFs posted: **{stats['posts']}**\n"
             f"Last post: **{last}**",
+            ephemeral=True,
+        )
+
+    @app_commands.command(name="status", description="Show bot health and harvest status")
+    @app_commands.default_permissions(manage_guild=True)
+    async def status(self, interaction: discord.Interaction) -> None:
+        handles = await self.bot.store.handles()
+        stats = await self.bot.store.stats()
+        latest = await self.bot.store.latest_post()
+        last_poll = await self.bot.store.get_setting("last_poll_completed_at")
+        account_health = await self.bot.scraper.account_health()
+
+        await interaction.response.send_message(
+            "**gifgoblin status**\n"
+            f"Tracked accounts ({len(handles)}): {_format_handles(handles)}\n"
+            f"Last poll: **{_format_timestamp(last_poll)}**\n"
+            f"Last posted GIF: {_format_latest_post(latest)}\n"
+            f"Total posted: **{stats['posts']}**\n"
+            f"Donor accounts: **{_format_account_health(account_health)}**\n"
+            f"Poll interval: **{self.bot.cfg.poll_minutes:g} min**",
             ephemeral=True,
         )
