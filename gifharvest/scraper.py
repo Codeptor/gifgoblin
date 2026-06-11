@@ -48,6 +48,12 @@ def _has_relogin_credentials(account: Any) -> bool:
     )
 
 
+def _has_real_error(error_msg: Any) -> bool:
+    # twscrape's accounts_info serializes "no error" as the literal string
+    # "None" (not Python None), so a naive truthiness check flags every account
+    return bool(error_msg) and str(error_msg).strip().lower() not in {"", "none"}
+
+
 def parse_tweet_url(raw: str) -> int | None:
     text = raw.strip()
     if text.isdigit():
@@ -155,8 +161,12 @@ class TwitterScraper:
         # logged_in is NOT a health signal: cookie-auth donors (added via
         # `accounts add`/`browser-refresh`) never run twscrape's login() flow, so
         # accounts_info reports logged_in=no even while they scrape fine. Only an
-        # inactive account or a stored error_msg means the donor needs a refresh.
-        errors = sorted(x["username"] for x in infos if not x.get("active") or x.get("error_msg"))
+        # inactive account or a real stored error means the donor needs a refresh.
+        errors = sorted(
+            x["username"]
+            for x in infos
+            if not x.get("active") or _has_real_error(x.get("error_msg"))
+        )
         reloginable = sorted(
             username
             for username in errors

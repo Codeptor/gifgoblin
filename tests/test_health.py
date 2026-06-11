@@ -37,6 +37,15 @@ async def test_cookie_auth_donor_is_healthy_despite_logged_in_no():
     assert message is None
 
 
+async def test_error_msg_literal_none_string_is_not_an_error():
+    # twscrape stores "no error" as the string "None", not Python None
+    health = await _scraper(
+        [_info("donor1", active=True, logged_in=False, error_msg="None")]
+    ).account_health()
+    assert health["errors"] == []
+    assert _donor_alert_state(health)[0] == "ok"
+
+
 async def test_inactive_donor_alerts():
     health = await _scraper([_info("burner", active=False, logged_in=False)]).account_health()
     assert health["errors"] == ["burner"]
