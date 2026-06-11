@@ -8,7 +8,13 @@ from helpers import BASE, anim, candidate, tweet, user_id_for, video, video_vari
 
 from gifharvest.db import Store
 from gifharvest.models import MediaKind
-from gifharvest.scraper import TwitterScraper, extract_candidates, normalize_handle, plan_posts
+from gifharvest.scraper import (
+    TwitterScraper,
+    extract_candidates,
+    normalize_handle,
+    parse_tweet_url,
+    plan_posts,
+)
 
 
 def _extract(tw, tracked="shitposter", *, retweets=False, videos=False):
@@ -148,9 +154,10 @@ def test_normalize_handle_rejects(raw: str):
 
 
 class FakeAPI:
-    def __init__(self, tweets: list, resolvable: bool = True):
+    def __init__(self, tweets: list, resolvable: bool = True, detail=None):
         self._tweets = tweets
         self._resolvable = resolvable
+        self._detail = detail
 
     async def user_by_login(self, handle: str):
         if not self._resolvable:
@@ -161,10 +168,13 @@ class FakeAPI:
         for tw in self._tweets:
             yield tw
 
+    async def tweet_details(self, twid: int):
+        return self._detail
 
-def make_scraper(tweets: list, *, retweets: bool = False, resolvable: bool = True):
+
+def make_scraper(tweets: list, *, retweets: bool = False, resolvable: bool = True, detail=None):
     cfg = SimpleNamespace(scrape_limit=20, include_retweets=retweets, include_videos=False)
-    return TwitterScraper(FakeAPI(tweets, resolvable), cfg)
+    return TwitterScraper(FakeAPI(tweets, resolvable, detail), cfg)
 
 
 @pytest.fixture
@@ -205,6 +215,69 @@ async def test_fetch_new_keeps_own_tweets_and_skips_seen(store: Store):
 async def test_fetch_new_returns_none_when_resolution_fails(store: Store):
     scraper = make_scraper([], resolvable=False)
     assert await scraper.fetch_new(store, "ghost") is None
+
+
+# -- parse_tweet_url / fetch_tweet ---------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("https://x.com/foo/status/123", 123),
+        ("https://twitter.com/foo/status/123?s=20&t=abc", 123),
+        ("x.com/i/status/456", 456),
+        ("https://mobile.twitter.com/foo/statuses/789", 789),
+        ("https://fxtwitter.com/foo/status/321", 321),
+        ("https://d.fxtwitter.com/foo/status/321", 321),
+        ("https://vxtwitter.com/foo/status/55/photo/1", 55),
+        ("987654321", 987654321),
+    ],
+)
+def test_parse_tweet_url_accepts(raw: str, expected: int):
+    assert parse_tweet_url(raw) == expected
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "",
+        "https://x.com/foo",
+        "not a url",
+        "https://youtube.com/status/1",
+        "x.com/foo/status/abc",
+    ],
+)
+def test_parse_tweet_url_rejects(raw: str):
+    assert parse_tweet_url(raw) is None
+
+
+async def test_fetch_tweet_includes_videos_despite_optin_flags():
+    tw = tweet(tid=7, user="poster", animated=[anim("https://v/g.mp4")], videos=[video()])
+    scraper = make_scraper([], detail=tw)  # cfg has include_videos=False
+    cands = await scraper.fetch_tweet(7)
+    assert {c.kind for c in cands} == {MediaKind.GIF, MediaKind.VIDEO}
+    assert all(c.tweet_id == 7 for c in cands)
+
+
+async def test_fetch_tweet_resolves_retweet_to_original():
+    original = tweet(tid=10, user="og_author", animated=[anim("https://v/og.mp4")])
+    rt = tweet(tid=99, user="Linker", minutes=60, retweeted=original)
+    scraper = make_scraper([], detail=rt)
+    (cand,) = await scraper.fetch_tweet(99)
+    assert cand.tweet_id == 10
+    assert cand.author == "og_author"
+    assert cand.via_retweet is True
+    assert cand.tracked_handle == "linker"
+
+
+async def test_fetch_tweet_none_when_unfetchable():
+    scraper = make_scraper([], detail=None)
+    assert await scraper.fetch_tweet(1) is None
+
+
+async def test_fetch_tweet_empty_for_no_media():
+    scraper = make_scraper([], detail=tweet(tid=3, user="texter"))
+    assert await scraper.fetch_tweet(3) == []
 
 
 # -- plan_posts -------------------------------------------------------------------

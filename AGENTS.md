@@ -11,9 +11,9 @@ Scrape GIFs from tracked X/Twitter accounts (twscrape, cookie-auth donor account
 | `gifharvest/config.py` | Env/.env configuration | frozen `Config`, `Config.load(require_discord=True)` |
 | `gifharvest/models.py` | Core data types | `MediaKind{GIF,VIDEO}`, frozen `GifCandidate` (`.fallback_url` → d.fxtwitter.com, `.filename` → `author_tweetid.mp4`) |
 | `gifharvest/db.py` | SQLite store (aiosqlite) | `Store.open(path)`, `add_handle/remove_handle/handles`, `get_user_id/set_user_id`, `is_first_scrape/mark_scraped`, `is_seen/mark_seen/record_post`, `get_setting/set_setting`, `stats()` |
-| `gifharvest/scraper.py` | twscrape wrapper: resolve handles, pull tweets, extract animated-gif/video candidates, plan what to post | scrape per handle → candidate list; `plan_posts` applies dedupe + first-run backfill |
+| `gifharvest/scraper.py` | twscrape wrapper: resolve handles, pull tweets (timeline + single-tweet `fetch_tweet` for `/get`), extract animated-gif/video candidates, plan what to post | scrape per handle → candidate list; `plan_posts` applies dedupe + first-run backfill |
 | `gifharvest/downloader.py` | Fetch media bytes (httpx), ffmpeg mp4→gif conversion (two-pass palette, on by default) | size-aware: gif falls back to mp4, mp4 over limit falls back to embed link |
-| `gifharvest/bot.py` | discord.py client, background poll loop, slash commands (`/track`, `/scan`, `/harveststats`) | posts upload + caption `@author · <tweet link>` |
+| `gifharvest/bot.py` | discord.py client, background poll loop, slash commands (`/track`, `/scan`, `/get`, `/status`, `/harveststats`) | posts upload + caption `@author · <tweet link>` |
 | `gifharvest/cli.py` | Console entrypoint `gifharvest` | `run`, `scrape [--mark-seen]`, `track add/remove/list`, `accounts add/list`, `stats` |
 
 Data flow: **scraper** (twscrape → `GifCandidate`s) → **plan_posts** (Store dedupe, backfill cap) → **downloader** (bytes, gif conversion by default) → **bot** (Discord upload or fallback embed) → **store** (`record_post`).

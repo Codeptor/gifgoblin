@@ -16,7 +16,7 @@ from .config import Config
 from .db import Store
 from .downloader import convert_to_gif, fetch_media
 from .models import GifCandidate, MediaKind
-from .scraper import TwitterScraper, normalize_handle, plan_posts
+from .scraper import TwitterScraper, normalize_handle, parse_tweet_url, plan_posts
 
 log = logging.getLogger(__name__)
 
@@ -113,16 +113,20 @@ class GifHarvestBot(commands.Bot):
     async def _wait_ready(self) -> None:
         await self.wait_until_ready()
 
+    async def _channel_and_limit(self) -> tuple[discord.abc.Messageable, int]:
+        channel = self.get_channel(self.cfg.channel_id) or await self.fetch_channel(
+            self.cfg.channel_id
+        )
+        if self.cfg.max_upload_bytes > 0:
+            limit = self.cfg.max_upload_bytes
+        else:
+            guild = getattr(channel, "guild", None)
+            limit = getattr(guild, "filesize_limit", DEFAULT_UPLOAD_LIMIT)
+        return channel, limit
+
     async def run_cycle(self) -> dict:
         async with self._cycle_lock:
-            channel = self.get_channel(self.cfg.channel_id) or await self.fetch_channel(
-                self.cfg.channel_id
-            )
-            if self.cfg.max_upload_bytes > 0:
-                limit = self.cfg.max_upload_bytes
-            else:
-                guild = getattr(channel, "guild", None)
-                limit = getattr(guild, "filesize_limit", DEFAULT_UPLOAD_LIMIT)
+            channel, limit = await self._channel_and_limit()
 
             handles = await self.store.handles()
             posted = 0
@@ -193,6 +197,29 @@ class GifHarvestBot(commands.Bot):
 
             await self.store.mark_poll_completed()
             return {"handles": len(handles), "posted": posted, "errors": errors}
+
+    async def post_now(self, candidates: list[GifCandidate]) -> tuple[int, int]:
+        """Post explicitly requested candidates straight to the gif channel."""
+        channel, limit = await self._channel_and_limit()
+        posted = 0
+        errors = 0
+        failed: set[int] = set()
+        for i, candidate in enumerate(candidates):
+            if i:
+                await asyncio.sleep(_POST_PAUSE_SECONDS)
+            try:
+                await self._post(channel, candidate, limit)
+                await self.store.record_post(candidate)
+                posted += 1
+            except Exception:
+                log.exception("failed to post %s", candidate.tweet_url)
+                failed.add(candidate.tweet_id)
+                errors += 1
+        # keeps the poller from re-posting the same tweet later if its author
+        # is (or becomes) tracked; failed tweets stay eligible
+        for tweet_id in {c.tweet_id for c in candidates} - failed:
+            await self.store.mark_tweet_seen(tweet_id)
+        return posted, errors
 
     async def _post(self, channel, c: GifCandidate, limit: int) -> None:
         dl = await fetch_media(self.http_client, c.media_url, limit)
@@ -307,6 +334,45 @@ class HarvestCog(commands.Cog):
             log.warning("scan finished after the interaction expired: %s", summary)
             if interaction.channel is not None:
                 await interaction.channel.send(summary)
+
+    @app_commands.command(
+        name="get", description="Fetch a tweet's gif/video and post it to the channel"
+    )
+    @app_commands.describe(link="X/Twitter status link")
+    async def get(self, interaction: discord.Interaction, link: str) -> None:
+        tweet_id = parse_tweet_url(link)
+        if tweet_id is None:
+            await interaction.response.send_message(
+                f"`{link}` doesn't look like a tweet link.", ephemeral=True
+            )
+            return
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        try:
+            candidates = await self.bot.scraper.fetch_tweet(tweet_id)
+        except NoAccountError:
+            if await self.bot.scraper.has_active_accounts():
+                message = "All donor accounts are rate-limited — try again in a few minutes."
+            else:
+                message = (
+                    "No donor X account configured — add one with "
+                    "`gifharvest accounts add` (see README)."
+                )
+            await interaction.followup.send(message, ephemeral=True)
+            return
+        if candidates is None:
+            await interaction.followup.send(
+                "Couldn't fetch that tweet — deleted, protected, or X hiccuped.",
+                ephemeral=True,
+            )
+            return
+        if not candidates:
+            await interaction.followup.send("That tweet has no gif or video.", ephemeral=True)
+            return
+        posted, errors = await self.bot.post_now(candidates)
+        summary = f"Posted {posted} item(s) to <#{self.bot.cfg.channel_id}>."
+        if errors:
+            summary += f" {errors} failed — check the logs."
+        await interaction.followup.send(summary, ephemeral=True)
 
     @app_commands.command(name="harveststats", description="Show harvest stats")
     async def harveststats(self, interaction: discord.Interaction) -> None:

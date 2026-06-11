@@ -33,6 +33,22 @@ def normalize_handle(raw: str) -> str | None:
     return text.lower()
 
 
+_STATUS_URL_RE = re.compile(
+    r"(?:https?://)?(?:(?:www|mobile|d)\.)?"
+    r"(?:x|twitter|fxtwitter|vxtwitter|fixupx|fixvx)\.com/"
+    r"(?:i/|[A-Za-z0-9_]{1,15}/)?status(?:es)?/(\d+)",
+    re.IGNORECASE,
+)
+
+
+def parse_tweet_url(raw: str) -> int | None:
+    text = raw.strip()
+    if text.isdigit():
+        return int(text)
+    match = _STATUS_URL_RE.match(text)
+    return int(match.group(1)) if match else None
+
+
 def extract_candidates(
     tweet: Any,
     tracked_handle: str,
@@ -124,6 +140,23 @@ class TwitterScraper:
             "logged_in": sum(1 for x in infos if x.get("logged_in")),
             "errors": errors,
         }
+
+    async def fetch_tweet(self, tweet_id: int) -> list[GifCandidate] | None:
+        """Every gif/video on one explicitly requested tweet, or None when unfetchable.
+
+        The poll-loop opt-ins don't apply here: a pasted link is explicit intent,
+        so retweets resolve to their original and plain videos are included.
+        """
+        tweet = await self._api.tweet_details(tweet_id)
+        if tweet is None:
+            logger.warning("could not fetch tweet %d — deleted, protected, or transient", tweet_id)
+            return None
+        return extract_candidates(
+            tweet,
+            tweet.user.username.lower(),
+            include_retweets=True,
+            include_videos=True,
+        )
 
     async def fetch_new(self, store: Store, handle: str) -> list[GifCandidate] | None:
         """Return new candidates for a handle, or None when resolution failed."""
