@@ -106,3 +106,15 @@ Stop it with:
 ```sh
 docker compose down
 ```
+
+## Deploying from GitHub Actions
+
+Pushes to `main` can deploy to the VPS through `.github/workflows/deploy.yml`. The workflow SSHes to `/home/deploy/bots/gifgoblin`, resets to the pushed commit, runs `docker compose up -d --build`, and posts an update message to Discord channel `1385304293845766366`.
+
+Required repository secret:
+
+```text
+VPS_SSH_KEY
+```
+
+`VPS_SSH_KEY` must be a private SSH key whose public key is present in `/home/deploy/.ssh/authorized_keys` on the VPS.

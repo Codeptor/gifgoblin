@@ -1,0 +1,51 @@
+name: Deploy gifgoblin
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+concurrency:
+  group: gifgoblin-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      VPS_HOST: 167.86.115.137
+      VPS_USER: deploy
+      VPS_APP_DIR: /home/deploy/bots/gifgoblin
+      DEPLOY_NOTIFY_CHANNEL_ID: "1385304293845766366"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure SSH
+        run: |
+          test -n "${{ secrets.VPS_SSH_KEY }}" || {
+            echo "Missing repository secret VPS_SSH_KEY"
+            exit 1
+          }
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/vps_deploy_key
+          chmod 600 ~/.ssh/vps_deploy_key
+          ssh-keyscan -H "$VPS_HOST" >> ~/.ssh/known_hosts
+
+      - name: Deploy on VPS
+        run: |
+          ssh -i ~/.ssh/vps_deploy_key "$VPS_USER@$VPS_HOST" \
+            "GITHUB_SHA='$GITHUB_SHA' VPS_APP_DIR='$VPS_APP_DIR' DEPLOY_NOTIFY_CHANNEL_ID='$DEPLOY_NOTIFY_CHANNEL_ID' bash -s" <<'REMOTE'
+          set -euo pipefail
+
+          mkdir -p "$(dirname "$VPS_APP_DIR")"
+          if [ ! -d "$VPS_APP_DIR/.git" ]; then
+            git clone https://github.com/Codeptor/gifgoblin.git "$VPS_APP_DIR"
+          fi
+
+          cd "$VPS_APP_DIR"
+          git fetch origin main
+          git reset --hard "$GITHUB_SHA"
+          chmod +x deploy/vps-deploy.sh
+          ./deploy/vps-deploy.sh "$GITHUB_SHA" "$DEPLOY_NOTIFY_CHANNEL_ID"
+          REMOTE
