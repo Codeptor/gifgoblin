@@ -29,6 +29,7 @@ def _as_float(value: str | None, default: float) -> float:
 class Config:
     discord_token: str
     channel_id: int
+    alert_channel_id: int | None
     guild_id: int | None
     poll_minutes: float
     scrape_limit: int
@@ -55,9 +56,11 @@ class Config:
             if channel_id <= 0:
                 raise SystemExit("GIF_CHANNEL_ID is not set (see .env.example)")
         guild_id = _as_int(os.getenv("GUILD_ID"), 0)
+        alert_channel_id = _as_int(os.getenv("ALERT_CHANNEL_ID"), 0)
         return cls(
             discord_token=token,
             channel_id=channel_id,
+            alert_channel_id=alert_channel_id or None,
             guild_id=guild_id or None,
             poll_minutes=_as_float(os.getenv("POLL_MINUTES"), 10.0),
             scrape_limit=_as_int(os.getenv("SCRAPE_LIMIT"), 20),

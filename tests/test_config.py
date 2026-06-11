@@ -9,6 +9,7 @@ from gifharvest.config import Config, _as_bool, _as_float, _as_int
 ENV_VARS = (
     "DISCORD_TOKEN",
     "GIF_CHANNEL_ID",
+    "ALERT_CHANNEL_ID",
     "GUILD_ID",
     "POLL_MINUTES",
     "SCRAPE_LIMIT",
@@ -40,6 +41,7 @@ def test_defaults_without_discord():
     cfg = Config.load(require_discord=False)
     assert cfg.discord_token == ""
     assert cfg.channel_id == 0
+    assert cfg.alert_channel_id is None
     assert cfg.guild_id is None
     assert cfg.poll_minutes == 10.0
     assert cfg.scrape_limit == 20
@@ -117,3 +119,8 @@ def test_guild_id_unset_or_zero_is_none(monkeypatch):
 def test_guild_id_set(monkeypatch):
     monkeypatch.setenv("GUILD_ID", "987654321")
     assert Config.load(require_discord=False).guild_id == 987654321
+
+
+def test_alert_channel_id_set(monkeypatch):
+    monkeypatch.setenv("ALERT_CHANNEL_ID", "123456789")
+    assert Config.load(require_discord=False).alert_channel_id == 123456789

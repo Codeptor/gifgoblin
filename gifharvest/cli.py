@@ -6,6 +6,7 @@ import contextlib
 import getpass
 import logging
 import sys
+from pathlib import Path
 
 from twscrape import API, NoAccountError, set_log_level
 
@@ -166,6 +167,72 @@ async def cmd_accounts_add(username: str, cookies: str | None) -> None:
     print(f"{GREEN}✓{RESET} account @{username} {verb}")
 
 
+async def cmd_accounts_browser_refresh(
+    username: str, profile_dir: str | None, headless: bool
+) -> None:
+    try:
+        from playwright.async_api import Error as PlaywrightError
+        from playwright.async_api import async_playwright
+    except ImportError:
+        print(
+            f"{RED}✗{RESET} Playwright is not installed in this environment.\n"
+            "Run `uv sync` after pulling the latest repo, then try again.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    if headless:
+        print(
+            f"{DIM}Headless mode only works if this browser profile is already logged in."
+            f"{RESET}"
+        )
+
+    cfg = Config.load(require_discord=False)
+    _setup_logging(cfg)
+    user_data_dir = Path(profile_dir or f".browser-profiles/{username}").expanduser()
+    user_data_dir.mkdir(parents=True, exist_ok=True)
+
+    print(f"Opening Chromium with profile: {user_data_dir}")
+    print("Log into X in the browser window, then come back here and press Enter.")
+    try:
+        async with async_playwright() as p:
+            context = await p.chromium.launch_persistent_context(
+                str(user_data_dir),
+                headless=headless,
+                viewport={"width": 1280, "height": 900},
+            )
+            page = context.pages[0] if context.pages else await context.new_page()
+            await page.goto("https://x.com/home", wait_until="domcontentloaded")
+            await asyncio.to_thread(input, "Press Enter after X is logged in...")
+            cookies = await context.cookies(["https://x.com", "https://twitter.com"])
+            await context.close()
+    except PlaywrightError as exc:
+        print(f"{RED}✗{RESET} could not launch browser: {exc}", file=sys.stderr)
+        print(
+            "\nOn a VPS, this needs a browser UI, for example SSH X11 forwarding.\n"
+            "Install the browser once with:\n"
+            "  docker compose run --rm gifgoblin python -m playwright install chromium\n"
+            "If there is no GUI, use the reliable fallback:\n"
+            "  docker compose run --rm -i gifgoblin gifharvest accounts add "
+            f"{username}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    cookie_map = {c["name"]: c["value"] for c in cookies}
+    auth_token = cookie_map.get("auth_token")
+    ct0 = cookie_map.get("ct0")
+    if not auth_token or not ct0:
+        print(
+            f"{RED}✗{RESET} auth_token and ct0 were not found. "
+            "Make sure the browser is logged into x.com, then retry.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    await cmd_accounts_add(username, f"auth_token={auth_token}; ct0={ct0}")
+
+
 async def cmd_accounts_list() -> None:
     cfg = Config.load(require_discord=False)
     _setup_logging(cfg)
@@ -240,6 +307,19 @@ def _build_parser() -> argparse.ArgumentParser:
         help='cookie string, e.g. "auth_token=...; ct0=..." (omit to enter it '
         "at a hidden prompt or pipe it via stdin)",
     )
+    p_acc_refresh = acc_sub.add_parser(
+        "browser-refresh", help="refresh cookies from a manual X browser login"
+    )
+    p_acc_refresh.add_argument("username")
+    p_acc_refresh.add_argument(
+        "--profile-dir",
+        help="persistent browser profile directory (default: .browser-profiles/<username>)",
+    )
+    p_acc_refresh.add_argument(
+        "--headless",
+        action="store_true",
+        help="run without a visible browser; only useful if the profile is already logged in",
+    )
     acc_sub.add_parser("list", help="list pool accounts")
 
     sub.add_parser("stats", help="show database stats")
@@ -261,6 +341,10 @@ def main() -> None:
         case "accounts":
             if args.accounts_command == "add":
                 asyncio.run(cmd_accounts_add(args.username, args.cookies))
+            elif args.accounts_command == "browser-refresh":
+                asyncio.run(
+                    cmd_accounts_browser_refresh(args.username, args.profile_dir, args.headless)
+                )
             else:
                 asyncio.run(cmd_accounts_list())
         case "stats":

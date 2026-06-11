@@ -23,6 +23,7 @@ log = logging.getLogger(__name__)
 DEFAULT_UPLOAD_LIMIT = 10 * 1024 * 1024
 
 _POST_PAUSE_SECONDS = 1.5
+_DONOR_ALERT_SETTING = "donor_account_alert_state"
 
 
 def _format_timestamp(raw: str | None) -> str:
@@ -70,6 +71,24 @@ def _format_account_health(health: dict[str, int | list[str]]) -> str:
             visible += f", +{len(errors) - 5} more"
         summary += f" - check {visible}"
     return summary
+
+
+def _donor_alert_state(health: dict[str, int | list[str]]) -> tuple[str, str | None]:
+    total = int(health["total"])
+    active = int(health["active"])
+    logged_in = int(health["logged_in"])
+    errors = [str(x) for x in health["errors"]]
+    if total == 0:
+        return "none", "No X donor accounts are configured. Add one with `gifharvest accounts add`."
+    if errors or logged_in < total or active < total:
+        bad = ", ".join(f"@{x}" for x in errors) if errors else "unknown account"
+        return (
+            f"bad:{total}:{active}:{logged_in}:{','.join(errors)}",
+            f"X donor account needs refresh: {bad}. "
+            f"Health is {active}/{total} active, {logged_in}/{total} logged in. "
+            "Refresh cookies with `gifharvest accounts browser-refresh <username>`.",
+        )
+    return "ok", None
 
 
 class GifHarvestBot(commands.Bot):
@@ -199,7 +218,32 @@ class GifHarvestBot(commands.Bot):
                 await self.store.mark_scraped(handle)
 
             await self.store.mark_poll_completed()
+            await self._maybe_alert_account_health()
             return {"handles": len(handles), "posted": posted, "errors": errors}
+
+    async def _maybe_alert_account_health(self) -> None:
+        try:
+            health = await self.scraper.account_health()
+            state, message = _donor_alert_state(health)
+            previous = await self.store.get_setting(_DONOR_ALERT_SETTING)
+            if state == previous:
+                return
+
+            if state == "ok":
+                if previous and previous != "ok":
+                    await self._send_alert("X donor account health recovered.")
+                await self.store.set_setting(_DONOR_ALERT_SETTING, state)
+                return
+            if message:
+                await self._send_alert(message)
+                await self.store.set_setting(_DONOR_ALERT_SETTING, state)
+        except Exception:
+            log.exception("failed to check donor account health")
+
+    async def _send_alert(self, content: str) -> None:
+        channel_id = self.cfg.alert_channel_id or self.cfg.channel_id
+        channel = self.get_channel(channel_id) or await self.fetch_channel(channel_id)
+        await channel.send(content, allowed_mentions=discord.AllowedMentions.none())
 
     async def post_now(self, candidates: list[GifCandidate]) -> tuple[int, int]:
         """Post explicitly requested candidates straight to the gif channel."""

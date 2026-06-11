@@ -67,9 +67,33 @@ uv run gifharvest run                                  # start the Discord bot +
 uv run gifharvest scrape [--mark-seen]                 # dry-run scrape; --mark-seen marks results seen
 uv run gifharvest track add|remove|list [<handles>]    # manage tracked handles
 uv run gifharvest accounts add <user> [--cookies ...]  # add/refresh a donor X account (cookies prompted if omitted)
+uv run gifharvest accounts browser-refresh <user>      # open a browser, log into X, extract auth_token/ct0
 uv run gifharvest accounts list                        # show donor account pool
 uv run gifharvest stats                                # store stats
 ```
+
+`accounts browser-refresh` uses a Playwright Chromium profile under
+`.browser-profiles/<user>` and waits for you to log into X manually. On a headless
+VPS, this requires a browser UI such as SSH X11 forwarding; otherwise use
+`accounts add` and paste the cookie string at the hidden prompt.
+
+With Docker on the VPS:
+
+```sh
+cd /home/deploy/bots/gifgoblin
+docker compose run --rm -it gifgoblin sh -lc 'python -m playwright install --with-deps chromium && gifharvest accounts browser-refresh <burner_username>'
+```
+
+If the VPS has no browser UI, use:
+
+```sh
+cd /home/deploy/bots/gifgoblin
+docker compose run --rm -i gifgoblin gifharvest accounts add <burner_username>
+```
+
+The bot checks donor account health after each poll. If a donor is inactive or
+`logged_in=no`, it sends a one-time warning to `ALERT_CHANNEL_ID` (or
+`GIF_CHANNEL_ID` when unset), then sends a recovery message once health returns.
 
 ## Slash commands
 
