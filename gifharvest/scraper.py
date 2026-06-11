@@ -152,11 +152,11 @@ class TwitterScraper:
     async def account_health(self) -> dict[str, int | list[str]]:
         infos = await self._api.pool.accounts_info()
         accounts = {x.username: x for x in await self._api.pool.get_all()}
-        errors = sorted(
-            x["username"]
-            for x in infos
-            if not x.get("active") or not x.get("logged_in") or x.get("error_msg")
-        )
+        # logged_in is NOT a health signal: cookie-auth donors (added via
+        # `accounts add`/`browser-refresh`) never run twscrape's login() flow, so
+        # accounts_info reports logged_in=no even while they scrape fine. Only an
+        # inactive account or a stored error_msg means the donor needs a refresh.
+        errors = sorted(x["username"] for x in infos if not x.get("active") or x.get("error_msg"))
         reloginable = sorted(
             username
             for username in errors

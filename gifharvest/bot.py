@@ -63,9 +63,8 @@ def _format_account_health(health: dict[str, int | list[str]]) -> str:
         return "0 configured"
 
     active = int(health["active"])
-    logged_in = int(health["logged_in"])
     errors = [str(x) for x in health["errors"]]
-    summary = f"{active}/{total} active, {logged_in}/{total} logged in"
+    summary = f"{active}/{total} active"
     if errors:
         visible = ", ".join(f"@{x}" for x in errors[:5])
         if len(errors) > 5:
@@ -80,17 +79,16 @@ def _format_account_health(health: dict[str, int | list[str]]) -> str:
 def _donor_alert_state(health: dict[str, int | list[str]]) -> tuple[str, str | None]:
     total = int(health["total"])
     active = int(health["active"])
-    logged_in = int(health["logged_in"])
     errors = [str(x) for x in health["errors"]]
     if total == 0:
         return "none", "No X donor accounts are configured. Add one with `gifharvest accounts add`."
-    if errors or logged_in < total or active < total:
+    if errors or active < total:
         bad = ", ".join(f"@{x}" for x in errors) if errors else "unknown account"
         reloginable = ",".join(str(x) for x in health.get("reloginable", []))
         return (
-            f"bad:{total}:{active}:{logged_in}:{','.join(errors)}:{reloginable}",
+            f"bad:{total}:{active}:{','.join(errors)}:{reloginable}",
             f"X donor account needs refresh: {bad}. "
-            f"Health is {active}/{total} active, {logged_in}/{total} logged in. "
+            f"Health is {active}/{total} active. "
             "Run `gifharvest accounts relogin <username>` if credentials are stored, "
             "or refresh cookies with `gifharvest accounts browser-refresh <username>`.",
         )
@@ -291,8 +289,7 @@ class GifHarvestBot(commands.Bot):
             if await self.scraper.has_active_accounts():
                 return "All donor accounts are rate-limited - try again in a few minutes."
             return (
-                "No donor X account configured - add or refresh one with "
-                "`gifharvest accounts add`."
+                "No donor X account configured - add or refresh one with `gifharvest accounts add`."
             )
 
         if candidates is None:
