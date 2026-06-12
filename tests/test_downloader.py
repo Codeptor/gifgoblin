@@ -7,7 +7,13 @@ from collections.abc import AsyncIterator
 import httpx
 import pytest
 
-from gifharvest.downloader import Download, convert_to_gif, fetch_media, gif_ffmpeg_args
+from gifharvest.downloader import (
+    Download,
+    _choose_fps,
+    convert_to_gif,
+    fetch_media,
+    gif_ffmpeg_args,
+)
 
 MEDIA_URL = "https://video.twimg.com/tweet_video/abc.mp4"
 
@@ -91,6 +97,28 @@ def test_gif_ffmpeg_args():
     assert "paletteuse=dither=bayer:bayer_scale=4" in vf
 
 
+def test_gif_ffmpeg_args_no_fps_keeps_native_timing():
+    args = gif_ffmpeg_args("/tmp/in.mp4", "/tmp/out.gif", fps=None, max_width=480)
+    vf = args[args.index("-vf") + 1]
+    assert "fps=" not in vf
+    assert vf.startswith("scale='min(iw,480)'")
+
+
+@pytest.mark.parametrize(
+    ("src_fps", "duration", "cap", "expected"),
+    [
+        (33.3, 0.15, 15, None),  # short fast loop (the MarioEmblem bug) → keep native
+        (10.0, 0.5, 15, None),  # already below cap → keep native
+        (30.0, 5.0, 15, 15),  # long & fast → downsample for size
+        (60.0, 0.3, 15, 50),  # short but ultra-fast → ceiling at browser-safe 50
+        (33.3, 0.0, 15, None),  # unknown duration → don't risk gutting it
+        (0.0, 2.0, 15, None),  # unknown fps → keep native
+    ],
+)
+def test_choose_fps(src_fps, duration, cap, expected):
+    assert _choose_fps(src_fps, duration, cap) == expected
+
+
 needs_ffmpeg = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not installed")
 
 
@@ -114,12 +142,68 @@ def tiny_mp4(tmp_path) -> bytes:
     return path.read_bytes()
 
 
+def _gif_frame_count(data: bytes, tmp_path) -> int:
+    path = tmp_path / "count.gif"
+    path.write_bytes(data)
+    out = subprocess.run(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-count_frames",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=nb_read_frames",
+            "-of",
+            "default=nokey=1:noprint_wrappers=1",
+            str(path),
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return int(out.stdout.strip())
+
+
+@pytest.fixture
+def short_fast_mp4(tmp_path) -> bytes:
+    # a sub-second high-framerate loop, like X's small animated_gif mp4s:
+    # 0.2s at 30fps == 6 frames. A fixed fps=15 cap would gut it to ~3.
+    path = tmp_path / "fast.mp4"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=duration=0.2:size=64x64:rate=30",
+            str(path),
+        ],
+        check=True,
+    )
+    return path.read_bytes()
+
+
 @needs_ffmpeg
 async def test_convert_to_gif_produces_gif(tiny_mp4):
     gif = await convert_to_gif(tiny_mp4, fps=10, max_width=64, max_bytes=10_000_000)
 
     assert gif is not None
     assert gif.startswith(b"GIF8")
+
+
+@needs_ffmpeg
+async def test_convert_preserves_frames_of_short_highfps_gif(short_fast_mp4, tmp_path):
+    # regression: a fixed fps=15 cap downsampled this 6-frame/0.2s loop to ~3
+    # frames, which reads as a static image (the MarioEmblem_2 /get bug)
+    gif = await convert_to_gif(short_fast_mp4, fps=15, max_width=64, max_bytes=10_000_000)
+
+    assert gif is not None
+    assert _gif_frame_count(gif, tmp_path) >= 5
 
 
 @needs_ffmpeg
