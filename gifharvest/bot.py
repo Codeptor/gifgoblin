@@ -23,6 +23,9 @@ log = logging.getLogger(__name__)
 DEFAULT_UPLOAD_LIMIT = 10 * 1024 * 1024
 
 _POST_PAUSE_SECONDS = 1.5
+# when converting to gif, the source clip may exceed the Discord upload limit
+# (only the output gif must fit); cap the source download to avoid huge fetches
+_CONVERT_SOURCE_LIMIT = 50 * 1024 * 1024
 _DONOR_ALERT_SETTING = "donor_account_alert_state"
 _DONOR_RELOGIN_SETTING = "donor_account_relogin_state"
 
@@ -340,31 +343,42 @@ class GifHarvestBot(commands.Bot):
             )
 
     async def _post(self, channel, c: GifCandidate, limit: int) -> None:
-        dl = await fetch_media(self.http_client, c.media_url, limit)
         caption = f"**@{c.author}**"
         if c.via_retweet:
             caption += f" (rt via @{c.tracked_handle})"
         caption += f" · <{c.tweet_url}>"
 
-        if dl.too_big:
+        async def send_fallback() -> None:
             # fallback link stays un-angle-bracketed so Discord embeds the video
             await channel.send(
                 f"{caption}\n{c.fallback_url}",
                 allowed_mentions=discord.AllowedMentions.none(),
             )
+
+        will_convert = self.cfg.convert_to_gif and c.kind is MediaKind.GIF
+        # a clip being converted may be larger than the upload limit — only the
+        # output gif must fit — so allow a bigger source download when converting
+        source_limit = max(limit, _CONVERT_SOURCE_LIMIT) if will_convert else limit
+        dl = await fetch_media(self.http_client, c.media_url, source_limit)
+        if dl.too_big:
+            await send_fallback()
             return
 
         data, filename = dl.data, c.filename
-        if self.cfg.convert_to_gif and c.kind is MediaKind.GIF:
+        if will_convert:
             gif = await convert_to_gif(
                 data,
                 fps=self.cfg.gif_fps,
                 max_width=self.cfg.gif_max_width,
                 max_bytes=limit,
             )
-            if gif:
+            if gif is not None:
                 data = gif
                 filename = str(PurePosixPath(filename).with_suffix(".gif"))
+            elif len(data) > limit:
+                # neither the converted gif nor the raw source fits the upload limit
+                await send_fallback()
+                return
 
         await channel.send(
             caption,

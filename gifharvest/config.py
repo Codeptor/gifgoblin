@@ -42,6 +42,7 @@ class Config:
     max_upload_bytes: int  # 0 = auto-detect from the guild's boost tier
     gif_fps: int
     gif_max_width: int
+    video_gif_max_seconds: float  # /get only: convert videos this short to gif (0 = off)
     db_path: Path
     accounts_db: Path
     log_level: str
@@ -74,6 +75,7 @@ class Config:
             max_upload_bytes=_as_int(os.getenv("MAX_UPLOAD_BYTES"), 0),
             gif_fps=_as_int(os.getenv("GIF_FPS"), 15),
             gif_max_width=_as_int(os.getenv("GIF_MAX_WIDTH"), 480),
+            video_gif_max_seconds=_as_float(os.getenv("VIDEO_GIF_MAX_SECONDS"), 5.0),
             db_path=Path(os.getenv("DB_PATH") or "data/gifharvest.db"),
             accounts_db=Path(os.getenv("ACCOUNTS_DB") or "data/accounts.db"),
             log_level=os.getenv("LOG_LEVEL", "INFO").upper(),

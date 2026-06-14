@@ -18,8 +18,14 @@ from gifharvest.scraper import (
 )
 
 
-def _extract(tw, tracked="shitposter", *, retweets=False, videos=False):
-    return extract_candidates(tw, tracked, include_retweets=retweets, include_videos=videos)
+def _extract(tw, tracked="shitposter", *, retweets=False, videos=False, video_gif_max_seconds=0.0):
+    return extract_candidates(
+        tw,
+        tracked,
+        include_retweets=retweets,
+        include_videos=videos,
+        video_gif_max_seconds=video_gif_max_seconds,
+    )
 
 
 # -- extract_candidates: GIFs ---------------------------------------------------
@@ -80,6 +86,31 @@ def test_video_with_only_non_mp4_variants_is_skipped():
     variants = [video_variant("https://v/p.m3u8", content_type="application/x-mpegURL")]
     tw = tweet(videos=[video(variants)])
     assert _extract(tw, videos=True) == []
+
+
+def test_short_video_retagged_as_gif_for_conversion():
+    tw = tweet(videos=[video(duration=3000)])
+    (cand,) = _extract(tw, videos=True, video_gif_max_seconds=5.0)
+    assert cand.kind is MediaKind.GIF
+
+
+def test_video_at_threshold_is_gif():
+    tw = tweet(videos=[video(duration=5000)])
+    (cand,) = _extract(tw, videos=True, video_gif_max_seconds=5.0)
+    assert cand.kind is MediaKind.GIF
+
+
+def test_long_video_stays_video():
+    tw = tweet(videos=[video(duration=8000)])
+    (cand,) = _extract(tw, videos=True, video_gif_max_seconds=5.0)
+    assert cand.kind is MediaKind.VIDEO
+
+
+def test_short_video_stays_video_when_threshold_disabled():
+    # the poll loop passes 0 — videos must remain mp4 uploads there
+    tw = tweet(videos=[video(duration=2000)])
+    (cand,) = _extract(tw, videos=True, video_gif_max_seconds=0.0)
+    assert cand.kind is MediaKind.VIDEO
 
 
 def test_gif_and_video_in_same_tweet():
@@ -173,8 +204,20 @@ class FakeAPI:
         return self._detail
 
 
-def make_scraper(tweets: list, *, retweets: bool = False, resolvable: bool = True, detail=None):
-    cfg = SimpleNamespace(scrape_limit=20, include_retweets=retweets, include_videos=False)
+def make_scraper(
+    tweets: list,
+    *,
+    retweets: bool = False,
+    resolvable: bool = True,
+    detail=None,
+    video_gif_max_seconds: float = 0.0,
+):
+    cfg = SimpleNamespace(
+        scrape_limit=20,
+        include_retweets=retweets,
+        include_videos=False,
+        video_gif_max_seconds=video_gif_max_seconds,
+    )
     return TwitterScraper(FakeAPI(tweets, resolvable, detail), cfg)
 
 
@@ -275,6 +318,21 @@ async def test_fetch_tweet_resolves_retweet_to_original():
     assert cand.author == "og_author"
     assert cand.via_retweet is True
     assert cand.tracked_handle == "linker"
+
+
+async def test_fetch_tweet_converts_short_video_to_gif():
+    tw = tweet(tid=8, user="poster", videos=[video(duration=3000)])
+    scraper = make_scraper([], detail=tw, video_gif_max_seconds=5.0)
+    (cand,) = await scraper.fetch_tweet(8)
+    assert cand.kind is MediaKind.GIF
+    assert cand.tweet_id == 8
+
+
+async def test_fetch_tweet_keeps_long_video_as_video():
+    tw = tweet(tid=9, user="poster", videos=[video(duration=20000)])
+    scraper = make_scraper([], detail=tw, video_gif_max_seconds=5.0)
+    (cand,) = await scraper.fetch_tweet(9)
+    assert cand.kind is MediaKind.VIDEO
 
 
 async def test_fetch_tweet_none_when_unfetchable():

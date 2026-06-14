@@ -83,6 +83,7 @@ def extract_candidates(
     *,
     include_retweets: bool,
     include_videos: bool,
+    video_gif_max_seconds: float = 0.0,
 ) -> list[GifCandidate]:
     src = tweet
     via_retweet = False
@@ -117,7 +118,11 @@ def extract_candidates(
                 default=None,
             )
             if best is not None:
-                candidates.append(build(best.url, MediaKind.VIDEO))
+                # short clips can be converted to a real gif (used by /get); the
+                # poll loop leaves the threshold at 0 so videos stay mp4 uploads
+                duration_s = (getattr(vid, "duration", 0) or 0) / 1000
+                kind = MediaKind.GIF if 0 < duration_s <= video_gif_max_seconds else MediaKind.VIDEO
+                candidates.append(build(best.url, kind))
     return candidates
 
 
@@ -202,6 +207,7 @@ class TwitterScraper:
             tweet.user.username.lower(),
             include_retweets=True,
             include_videos=True,
+            video_gif_max_seconds=self._cfg.video_gif_max_seconds,
         )
 
     async def fetch_new(self, store: Store, handle: str) -> list[GifCandidate] | None:

@@ -22,6 +22,7 @@ ENV_VARS = (
     "MAX_UPLOAD_BYTES",
     "GIF_FPS",
     "GIF_MAX_WIDTH",
+    "VIDEO_GIF_MAX_SECONDS",
     "DB_PATH",
     "ACCOUNTS_DB",
     "LOG_LEVEL",
@@ -55,6 +56,7 @@ def test_defaults_without_discord():
     assert cfg.max_upload_bytes == 0
     assert cfg.gif_fps == 15
     assert cfg.gif_max_width == 480
+    assert cfg.video_gif_max_seconds == 5.0
     assert cfg.db_path == Path("data/gifharvest.db")
     assert cfg.accounts_db == Path("data/accounts.db")
     assert cfg.log_level == "INFO"

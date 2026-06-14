@@ -125,7 +125,7 @@ sends a recovery message once health returns.
 
 - `/track add|remove|list` — manage tracked handles (requires Manage Guild; Discord applies group permissions to all subcommands)
 - `/scan` — trigger an immediate scrape (Manage Guild)
-- `/get <tweet link>` — fetch that tweet's gif/video and post it to the channel; accepts x.com / twitter.com / fxtwitter / vxtwitter links and bare tweet ids, and includes retweets and plain videos regardless of the poll-loop opt-ins (open to everyone — restrict it under Server Settings → Integrations if needed)
+- `/get <tweet link>` — fetch that tweet's gif/video and post it to the channel; accepts x.com / twitter.com / fxtwitter / vxtwitter links and bare tweet ids, and includes retweets and plain videos regardless of the poll-loop opt-ins. Videos `VIDEO_GIF_MAX_SECONDS` (default 5s) or shorter are converted to a real gif; longer ones post as mp4. (open to everyone — restrict it under Server Settings → Integrations if needed)
 - `/status` — show tracked accounts, poll timing, latest GIF, total posts, donor account health, and polling interval (Manage Guild)
 - `/harveststats` — store stats
 
