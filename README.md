@@ -8,6 +8,8 @@ Repo: https://github.com/Codeptor/gifgoblin
 
 A background loop polls every `POLL_MINUTES`. Each tracked handle is scraped via [twscrape](https://github.com/vladkens/twscrape) using cookie-authenticated donor X accounts. X stores "GIFs" as looping mp4s (`animated_gif` media) — those are picked out of each tweet (plain videos and retweets are opt-in via `INCLUDE_VIDEOS` / `INCLUDE_RETWEETS`). A SQLite store dedupes by both tweet id and media URL, so retweets and reposts of an already-seen GIF are skipped. New candidates are posted to `GIF_CHANNEL_ID` captioned `@author · <tweet link>`. By default (`CONVERT_TO_GIF=true`) each mp4 is converted to a real autoplaying, looping `.gif` via ffmpeg (two-pass palette), scaled so its longest side fits within `GIF_MAX_WIDTH` (fit-in-box, never upscaled); if ffmpeg is missing or the converted gif exceeds the guild upload limit, the bot automatically falls back to uploading the mp4. Set `CONVERT_TO_GIF=false` to post raw mp4s instead. Files over the guild upload limit fall back to a `d.fxtwitter.com` embed link. The first scrape of a newly tracked handle posts only the newest `BACKFILL_COUNT` and marks the rest seen, so adding a handle doesn't flood the channel.
 
+The bot can also watch one Discord channel for pasted X/Twitter status links. When someone posts a tweet or thread URL in `TWITTER_LINK_CHANNEL_ID` (defaults to `GIF_CHANNEL_ID`), the bot fetches that tweet's thread, uploads videos from the linked author as downloadable files, and records them in the same dedupe store.
+
 ## Setup
 
 1. Install dependencies:
@@ -16,7 +18,7 @@ A background loop polls every `POLL_MINUTES`. Each tracked handle is scraped via
    uv sync
    ```
 
-2. Create a Discord app at https://discord.com/developers/applications — add a bot, copy the bot token. No privileged intents needed. Invite it with:
+2. Create a Discord app at https://discord.com/developers/applications — add a bot and copy the bot token. Enable the bot's **Message Content Intent** in the Discord Developer Portal if you want automatic pasted-link detection. Invite it with:
 
    ```
    https://discord.com/oauth2/authorize?client_id=YOUR_APP_ID&scope=bot+applications.commands&permissions=52224
@@ -30,7 +32,7 @@ A background loop polls every `POLL_MINUTES`. Each tracked handle is scraped via
    cp .env.example .env
    ```
 
-   Fill `DISCORD_TOKEN` and `GIF_CHANNEL_ID` (enable Developer Mode in Discord, right-click the channel → Copy ID). Optionally set `GUILD_ID` so slash commands sync instantly instead of taking ~1h globally.
+   Fill `DISCORD_TOKEN` and `GIF_CHANNEL_ID` (enable Developer Mode in Discord, right-click the channel → Copy ID). Optionally set `TWITTER_LINK_CHANNEL_ID=1385304293845766366` if pasted Twitter links should be watched in a different channel, and set `GUILD_ID` so slash commands sync instantly instead of taking ~1h globally.
 
 4. Add an X donor account. Use a **burner** — the ban risk is real, do not use an account you care about. Log into x.com with the burner, open devtools → Application → Cookies → copy the `auth_token` and `ct0` values, then:
 

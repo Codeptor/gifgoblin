@@ -154,6 +154,7 @@ def test_include_retweets_resolves_original_tweet():
         ("https://x.com/Foo?s=20", "foo"),
         ("x.com/foo/status/123", "foo"),
         ("twitter.com/foo", "foo"),
+        ("https://mobile.twitter.com/foo/status/123", "foo"),
         ("HTTPS://WWW.X.COM/Foo", "foo"),
         ("http://www.twitter.com/Bar_Baz", "bar_baz"),
         ("A" * 15, "a" * 15),
@@ -186,10 +187,12 @@ def test_normalize_handle_rejects(raw: str):
 
 
 class FakeAPI:
-    def __init__(self, tweets: list, resolvable: bool = True, detail=None):
+    def __init__(self, tweets: list, resolvable: bool = True, detail=None, thread=None):
         self._tweets = tweets
         self._resolvable = resolvable
         self._detail = detail
+        self._thread = thread or []
+        self.requested_thread_limit = None
 
     async def user_by_login(self, handle: str):
         if not self._resolvable:
@@ -203,6 +206,11 @@ class FakeAPI:
     async def tweet_details(self, twid: int):
         return self._detail
 
+    async def tweet_thread(self, twid: int, limit: int = -1):
+        self.requested_thread_limit = limit
+        for tw in self._thread:
+            yield tw
+
 
 def make_scraper(
     tweets: list,
@@ -210,6 +218,7 @@ def make_scraper(
     retweets: bool = False,
     resolvable: bool = True,
     detail=None,
+    thread=None,
     video_gif_max_seconds: float = 0.0,
 ):
     cfg = SimpleNamespace(
@@ -217,8 +226,9 @@ def make_scraper(
         include_retweets=retweets,
         include_videos=False,
         video_gif_max_seconds=video_gif_max_seconds,
+        twitter_thread_limit=20,
     )
-    return TwitterScraper(FakeAPI(tweets, resolvable, detail), cfg)
+    return TwitterScraper(FakeAPI(tweets, resolvable, detail, thread), cfg)
 
 
 @pytest.fixture
@@ -343,6 +353,40 @@ async def test_fetch_tweet_none_when_unfetchable():
 async def test_fetch_tweet_empty_for_no_media():
     scraper = make_scraper([], detail=tweet(tid=3, user="texter"))
     assert await scraper.fetch_tweet(3) == []
+
+
+async def test_fetch_thread_media_uses_linked_author_and_includes_videos():
+    linked = tweet(tid=10, user="threader", videos=[video()])
+    linked.conversationId = 10
+    same_author_reply = tweet(
+        tid=11,
+        user="threader",
+        minutes=1,
+        videos=[video([video_variant("https://v/reply.mp4", bitrate=2_000)])],
+    )
+    same_author_reply.conversationId = 10
+    other_author_reply = tweet(
+        tid=12,
+        user="replyguy",
+        minutes=2,
+        videos=[video([video_variant("https://v/nope.mp4", bitrate=2_000)])],
+    )
+    other_author_reply.conversationId = 10
+    scraper = make_scraper(
+        [], detail=linked, thread=[linked, same_author_reply, other_author_reply]
+    )
+
+    candidates = await scraper.fetch_thread_media(10)
+
+    assert [c.tweet_id for c in candidates] == [10, 11]
+    assert [c.kind for c in candidates] == [MediaKind.VIDEO, MediaKind.VIDEO]
+    assert candidates[0].tracked_handle == "threader"
+    assert scraper._api.requested_thread_limit == 20
+
+
+async def test_fetch_thread_media_none_when_unfetchable():
+    scraper = make_scraper([], detail=None)
+    assert await scraper.fetch_thread_media(1) is None
 
 
 # -- plan_posts -------------------------------------------------------------------

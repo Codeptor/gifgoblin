@@ -14,6 +14,8 @@ ENV_VARS = (
     "POLL_MINUTES",
     "SCRAPE_LIMIT",
     "BACKFILL_COUNT",
+    "TWITTER_LINK_CHANNEL_ID",
+    "TWITTER_THREAD_LIMIT",
     "INCLUDE_RETWEETS",
     "INCLUDE_VIDEOS",
     "MESSAGE_LINKS_ENABLED",
@@ -48,6 +50,8 @@ def test_defaults_without_discord():
     assert cfg.poll_minutes == 10.0
     assert cfg.scrape_limit == 20
     assert cfg.backfill_count == 3
+    assert cfg.twitter_link_channel_id == 0
+    assert cfg.twitter_thread_limit == 20
     assert cfg.include_retweets is False
     assert cfg.include_videos is False
     assert cfg.message_links_enabled is False
@@ -128,3 +132,18 @@ def test_guild_id_set(monkeypatch):
 def test_alert_channel_id_set(monkeypatch):
     monkeypatch.setenv("ALERT_CHANNEL_ID", "123456789")
     assert Config.load(require_discord=False).alert_channel_id == 123456789
+
+
+def test_twitter_link_channel_defaults_to_gif_channel(monkeypatch):
+    monkeypatch.setenv("GIF_CHANNEL_ID", "1385304293845766366")
+    cfg = Config.load(require_discord=False)
+    assert cfg.twitter_link_channel_id == 1385304293845766366
+
+
+def test_twitter_link_channel_can_override_gif_channel(monkeypatch):
+    monkeypatch.setenv("GIF_CHANNEL_ID", "111")
+    monkeypatch.setenv("TWITTER_LINK_CHANNEL_ID", "222")
+    monkeypatch.setenv("TWITTER_THREAD_LIMIT", "7")
+    cfg = Config.load(require_discord=False)
+    assert cfg.twitter_link_channel_id == 222
+    assert cfg.twitter_thread_limit == 7

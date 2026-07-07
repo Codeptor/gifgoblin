@@ -34,6 +34,8 @@ class Config:
     poll_minutes: float
     scrape_limit: int
     backfill_count: int
+    twitter_link_channel_id: int
+    twitter_thread_limit: int
     include_retweets: bool
     include_videos: bool
     message_links_enabled: bool
@@ -67,6 +69,8 @@ class Config:
             poll_minutes=_as_float(os.getenv("POLL_MINUTES"), 10.0),
             scrape_limit=_as_int(os.getenv("SCRAPE_LIMIT"), 20),
             backfill_count=_as_int(os.getenv("BACKFILL_COUNT"), 3),
+            twitter_link_channel_id=_as_int(os.getenv("TWITTER_LINK_CHANNEL_ID"), channel_id),
+            twitter_thread_limit=_as_int(os.getenv("TWITTER_THREAD_LIMIT"), 20),
             include_retweets=_as_bool(os.getenv("INCLUDE_RETWEETS"), False),
             include_videos=_as_bool(os.getenv("INCLUDE_VIDEOS"), False),
             message_links_enabled=_as_bool(os.getenv("MESSAGE_LINKS_ENABLED"), False),

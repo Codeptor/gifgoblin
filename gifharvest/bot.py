@@ -146,12 +146,13 @@ class GifHarvestBot(commands.Bot):
         channel = self.get_channel(self.cfg.channel_id) or await self.fetch_channel(
             self.cfg.channel_id
         )
+        return channel, self._upload_limit(channel)
+
+    def _upload_limit(self, channel) -> int:
         if self.cfg.max_upload_bytes > 0:
-            limit = self.cfg.max_upload_bytes
-        else:
-            guild = getattr(channel, "guild", None)
-            limit = getattr(guild, "filesize_limit", DEFAULT_UPLOAD_LIMIT)
-        return channel, limit
+            return self.cfg.max_upload_bytes
+        guild = getattr(channel, "guild", None)
+        return getattr(guild, "filesize_limit", DEFAULT_UPLOAD_LIMIT)
 
     async def run_cycle(self) -> dict:
         async with self._cycle_lock:
@@ -262,9 +263,17 @@ class GifHarvestBot(commands.Bot):
         channel = self.get_channel(channel_id) or await self.fetch_channel(channel_id)
         await channel.send(content, allowed_mentions=discord.AllowedMentions.none())
 
-    async def post_now(self, candidates: list[GifCandidate]) -> tuple[int, int]:
-        """Post explicitly requested candidates straight to the gif channel."""
-        channel, limit = await self._channel_and_limit()
+    async def post_now(
+        self,
+        candidates: list[GifCandidate],
+        *,
+        channel: discord.abc.Messageable | None = None,
+    ) -> tuple[int, int]:
+        """Post explicitly requested candidates to a Discord channel."""
+        if channel is None:
+            channel, limit = await self._channel_and_limit()
+        else:
+            limit = self._upload_limit(channel)
         posted = 0
         errors = 0
         failed: set[int] = set()
@@ -314,13 +323,42 @@ class GifHarvestBot(commands.Bot):
             summary += f" {errors} failed - check the logs."
         return summary
 
+    async def post_tweet_thread_link(self, tweet_id: int, channel) -> str:
+        try:
+            candidates = await self.scraper.fetch_thread_media(tweet_id)
+        except NoAccountError:
+            if await self.scraper.has_active_accounts():
+                return "All donor accounts are rate-limited - try again in a few minutes."
+            return (
+                "No donor X account configured - add or refresh one with `gifharvest accounts add`."
+            )
+
+        if candidates is None:
+            await channel.send(
+                f"https://d.fxtwitter.com/i/status/{tweet_id}",
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
+            return (
+                "I could not fetch media directly from X, so I posted the fxtwitter fallback link."
+            )
+        if not candidates:
+            return "That thread has no gif or video from the linked author."
+
+        posted, errors = await self.post_now(candidates, channel=channel)
+        summary = f"Posted {posted} item(s)."
+        if errors:
+            summary += f" {errors} failed - check the logs."
+        return summary
+
     async def on_message(self, message: discord.Message) -> None:
+        if message.author.bot:
+            return
         await self.process_commands(message)
         if (
             not self.cfg.message_links_enabled
-            or message.author.bot
             or not message.guild
             or not message.content
+            or message.channel.id != self.cfg.twitter_link_channel_id
         ):
             return
 
@@ -330,7 +368,7 @@ class GifHarvestBot(commands.Bot):
 
         summaries: list[str] = []
         for tweet_id in tweet_ids[:3]:
-            summaries.append(await self.post_tweet_link(tweet_id))
+            summaries.append(await self.post_tweet_thread_link(tweet_id, message.channel))
         if len(tweet_ids) > 3:
             summaries.append(f"Skipped {len(tweet_ids) - 3} extra link(s).")
 

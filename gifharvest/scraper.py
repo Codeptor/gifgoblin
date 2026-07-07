@@ -15,7 +15,8 @@ logger = logging.getLogger(__name__)
 HANDLE_RE = re.compile(r"[A-Za-z0-9_]{1,15}")
 
 _PROFILE_URL_RE = re.compile(
-    r"(?:https?://)?(?:www\.)?(?:x|twitter)\.com/([A-Za-z0-9_]{1,15})(?:[/?#].*)?",
+    r"(?:https?://)?(?:www\.|mobile\.)?(?:x|twitter)\.com/"
+    r"([A-Za-z0-9_]{1,15})(?:[/?#].*)?",
     re.IGNORECASE,
 )
 
@@ -209,6 +210,41 @@ class TwitterScraper:
             include_videos=True,
             video_gif_max_seconds=self._cfg.video_gif_max_seconds,
         )
+
+    async def fetch_thread_media(self, tweet_id: int) -> list[GifCandidate] | None:
+        """Every gif/video by the linked author in the linked tweet's thread."""
+        linked = await self._api.tweet_details(tweet_id)
+        if linked is None:
+            logger.warning("could not fetch tweet %d — deleted, protected, or transient", tweet_id)
+            return None
+
+        target_author = linked.user.username.lower()
+        conversation_id = getattr(linked, "conversationId", None) or tweet_id
+        tweets_by_id: dict[int, Any] = {linked.id: linked}
+
+        async for tweet in self._api.tweet_thread(
+            conversation_id,
+            limit=self._cfg.twitter_thread_limit,
+        ):
+            tweets_by_id[tweet.id] = tweet
+
+        candidates: list[GifCandidate] = []
+        batch_urls: set[str] = set()
+        for tweet in sorted(tweets_by_id.values(), key=lambda t: t.date):
+            if tweet.user.username.lower() != target_author:
+                continue
+            for cand in extract_candidates(
+                tweet,
+                target_author,
+                include_retweets=True,
+                include_videos=True,
+                video_gif_max_seconds=0.0,
+            ):
+                if cand.media_url in batch_urls:
+                    continue
+                batch_urls.add(cand.media_url)
+                candidates.append(cand)
+        return candidates
 
     async def fetch_new(self, store: Store, handle: str) -> list[GifCandidate] | None:
         """Return new candidates for a handle, or None when resolution failed."""
