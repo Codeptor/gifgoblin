@@ -323,7 +323,7 @@ class GifHarvestBot(commands.Bot):
             summary += f" {errors} failed - check the logs."
         return summary
 
-    async def post_tweet_thread_link(self, tweet_id: int, channel) -> str:
+    async def post_tweet_thread_link(self, tweet_id: int, channel) -> str | None:
         try:
             candidates = await self.scraper.fetch_thread_media(tweet_id)
         except NoAccountError:
@@ -345,10 +345,9 @@ class GifHarvestBot(commands.Bot):
             return "That thread has no gif or video from the linked author."
 
         posted, errors = await self.post_now(candidates, channel=channel)
-        summary = f"Posted {posted} item(s)."
         if errors:
-            summary += f" {errors} failed - check the logs."
-        return summary
+            return f"Posted {posted} item(s). {errors} failed - check the logs."
+        return None
 
     async def on_message(self, message: discord.Message) -> None:
         if message.author.bot:
@@ -368,12 +367,13 @@ class GifHarvestBot(commands.Bot):
 
         summaries: list[str] = []
         for tweet_id in tweet_ids[:3]:
-            summaries.append(await self.post_tweet_thread_link(tweet_id, message.channel))
+            summary = await self.post_tweet_thread_link(tweet_id, message.channel)
+            if summary:
+                summaries.append(summary)
         if len(tweet_ids) > 3:
             summaries.append(f"Skipped {len(tweet_ids) - 3} extra link(s).")
 
-        has_failure = any("failed" in s.lower() for s in summaries)
-        if message.channel.id != self.cfg.channel_id or has_failure:
+        if summaries:
             await message.reply(
                 "\n".join(summaries),
                 mention_author=False,
