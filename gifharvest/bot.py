@@ -14,7 +14,7 @@ from twscrape import NoAccountError
 
 from .config import Config
 from .db import Store
-from .downloader import convert_to_gif, fetch_media
+from .downloader import convert_to_gif, convert_to_gif_fit, fetch_media
 from .models import GifCandidate, MediaKind
 from .scraper import TwitterScraper, normalize_handle, parse_tweet_url, parse_tweet_urls, plan_posts
 
@@ -300,7 +300,7 @@ class GifHarvestBot(commands.Bot):
     ) -> str:
         """Convert raw video bytes to gif and post them to the gif channel."""
         channel, limit = await self._channel_and_limit()
-        gif = await convert_to_gif(
+        gif = await convert_to_gif_fit(
             data,
             fps=fps or self.cfg.gif_fps,
             max_width=max_width or self.cfg.gif_max_width,
@@ -308,8 +308,8 @@ class GifHarvestBot(commands.Bot):
         )
         if gif is None:
             return (
-                "Couldn't convert that to a gif (too big for the upload limit, "
-                "unsupported format, or ffmpeg unavailable)."
+                "Couldn't fit that as a gif under the upload limit, even downscaled "
+                "to 240px - try a shorter clip."
             )
         gif_name = str(PurePosixPath(filename).with_suffix(".gif"))
         await channel.send(
@@ -342,7 +342,7 @@ class GifHarvestBot(commands.Bot):
         dl = await fetch_media(self.http_client, candidate.media_url, source_limit)
         if dl.too_big or not dl.data:
             return "That video is too large to download for conversion."
-        gif = await convert_to_gif(
+        gif = await convert_to_gif_fit(
             dl.data,
             fps=fps or self.cfg.gif_fps,
             max_width=max_width or self.cfg.gif_max_width,
@@ -350,8 +350,7 @@ class GifHarvestBot(commands.Bot):
         )
         if gif is None:
             return (
-                "Couldn't convert that video to a gif "
-                "(too big for the upload limit or ffmpeg failed)."
+                "Couldn't fit that video as a gif under the upload limit, even downscaled to 240px."
             )
         gif_name = str(PurePosixPath(candidate.filename).with_suffix(".gif"))
         caption = f"**@{candidate.author}** · <{candidate.tweet_url}>"

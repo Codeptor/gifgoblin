@@ -11,6 +11,7 @@ from gifharvest.downloader import (
     Download,
     _choose_fps,
     convert_to_gif,
+    convert_to_gif_fit,
     fetch_media,
     gif_ffmpeg_args,
 )
@@ -209,6 +210,51 @@ async def test_convert_preserves_frames_of_short_highfps_gif(short_fast_mp4, tmp
 @needs_ffmpeg
 async def test_convert_to_gif_respects_max_bytes(tiny_mp4):
     assert await convert_to_gif(tiny_mp4, fps=10, max_width=64, max_bytes=1) is None
+
+
+@needs_ffmpeg
+async def test_convert_to_gif_fit_first_attempt_wins(tiny_mp4):
+    gif = await convert_to_gif_fit(tiny_mp4, fps=10, max_width=64, max_bytes=10_000_000)
+
+    assert gif is not None
+    assert gif.startswith(b"GIF8")
+
+
+@pytest.fixture
+def big_mp4(tmp_path) -> bytes:
+    path = tmp_path / "big.mp4"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=duration=0.5:size=512x512:rate=10",
+            str(path),
+        ],
+        check=True,
+    )
+    return path.read_bytes()
+
+
+@needs_ffmpeg
+async def test_convert_to_gif_fit_downscales_until_it_fits(big_mp4):
+    full = await convert_to_gif(big_mp4, fps=10, max_width=480, max_bytes=10_000_000)
+    assert full is not None
+    # one byte under forces the first attempt to fail; the ladder must
+    # downscale instead of giving up
+    gif = await convert_to_gif_fit(big_mp4, fps=10, max_width=480, max_bytes=len(full) - 1)
+    assert gif is not None
+    assert gif.startswith(b"GIF8")
+    assert len(gif) < len(full)
+
+
+@needs_ffmpeg
+async def test_convert_to_gif_fit_gives_up(tiny_mp4):
+    assert await convert_to_gif_fit(tiny_mp4, fps=10, max_width=64, max_bytes=1) is None
 
 
 async def test_convert_to_gif_missing_ffmpeg_falls_back(monkeypatch, tmp_path):

@@ -142,3 +142,30 @@ async def convert_to_gif(mp4: bytes, *, fps: int, max_width: int, max_bytes: int
             logger.info("converted gif too big: %d > %d bytes", len(gif), max_bytes)
             return None
         return gif
+
+
+# /convert retries: each step roughly quarters the output size. A 17MB gif at
+# 480px/15fps typically fits after one downscale; the last step is a final
+# attempt before giving up.
+_CONVERT_LADDER = ((10, 320), (8, 240))
+
+
+async def convert_to_gif_fit(
+    mp4: bytes, *, fps: int, max_width: int, max_bytes: int
+) -> bytes | None:
+    """Convert, downscaling fps/width until the gif fits max_bytes."""
+    attempts = [(fps, max_width)]
+    attempts.extend((f, w) for f, w in _CONVERT_LADDER if f < fps or w < max_width)
+    for attempt_fps, attempt_width in attempts:
+        gif = await convert_to_gif(
+            mp4, fps=attempt_fps, max_width=attempt_width, max_bytes=max_bytes
+        )
+        if gif is not None:
+            if (attempt_fps, attempt_width) != attempts[0]:
+                logger.info(
+                    "gif fit at %dfps/%dpx after downscaling",
+                    attempt_fps,
+                    attempt_width,
+                )
+            return gif
+    return None
