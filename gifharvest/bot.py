@@ -269,6 +269,7 @@ class GifHarvestBot(commands.Bot):
         candidates: list[GifCandidate],
         *,
         channel: discord.abc.Messageable | None = None,
+        force_gif: bool = False,
     ) -> tuple[int, int]:
         """Post explicitly requested candidates to a Discord channel."""
         if channel is None:
@@ -282,7 +283,7 @@ class GifHarvestBot(commands.Bot):
             if i:
                 await asyncio.sleep(_POST_PAUSE_SECONDS)
             try:
-                await self._post(channel, candidate, limit)
+                await self._post(channel, candidate, limit, force_gif=force_gif)
                 await self.store.record_post(candidate)
                 posted += 1
             except Exception:
@@ -363,7 +364,7 @@ class GifHarvestBot(commands.Bot):
         await self.store.mark_tweet_seen(candidate.tweet_id)
         return f"Posted `{gif_name}` to <#{self.cfg.channel_id}>."
 
-    async def post_tweet_link(self, tweet_id: int) -> str:
+    async def post_tweet_link(self, tweet_id: int, *, force_gif: bool = False) -> str:
         try:
             candidates = await self.scraper.fetch_tweet(tweet_id)
         except NoAccountError:
@@ -386,7 +387,7 @@ class GifHarvestBot(commands.Bot):
         if not candidates:
             return "That tweet has no gif or video."
 
-        posted, errors = await self.post_now(candidates)
+        posted, errors = await self.post_now(candidates, force_gif=force_gif)
         summary = f"Posted {posted} item(s) to <#{self.cfg.channel_id}>."
         if errors:
             summary += f" {errors} failed - check the logs."
@@ -449,7 +450,7 @@ class GifHarvestBot(commands.Bot):
                 allowed_mentions=discord.AllowedMentions.none(),
             )
 
-    async def _post(self, channel, c: GifCandidate, limit: int) -> None:
+    async def _post(self, channel, c: GifCandidate, limit: int, *, force_gif: bool = False) -> None:
         caption = f"**@{c.author}**"
         if c.via_retweet:
             caption += f" (rt via @{c.tracked_handle})"
@@ -462,7 +463,7 @@ class GifHarvestBot(commands.Bot):
                 allowed_mentions=discord.AllowedMentions.none(),
             )
 
-        will_convert = self.cfg.convert_to_gif and c.kind is MediaKind.GIF
+        will_convert = force_gif or (self.cfg.convert_to_gif and c.kind is MediaKind.GIF)
         # a clip being converted may be larger than the upload limit — only the
         # output gif must fit — so allow a bigger source download when converting
         source_limit = max(limit, _CONVERT_SOURCE_LIMIT) if will_convert else limit
@@ -473,7 +474,8 @@ class GifHarvestBot(commands.Bot):
 
         data, filename = dl.data, c.filename
         if will_convert:
-            gif = await convert_to_gif(
+            convert = convert_to_gif_fit if force_gif else convert_to_gif
+            gif = await convert(
                 data,
                 fps=self.cfg.gif_fps,
                 max_width=self.cfg.gif_max_width,
@@ -594,10 +596,25 @@ class HarvestCog(commands.Cog):
                 await interaction.channel.send(summary)
 
     @app_commands.command(
-        name="get", description="Fetch a tweet's gif/video and post it to the channel"
+        name="get", description="Fetch a tweet's gif/video, convert it to a gif, and post it"
     )
     @app_commands.describe(link="X/Twitter status link")
     async def get(self, interaction: discord.Interaction, link: str) -> None:
+        tweet_id = parse_tweet_url(link)
+        if tweet_id is None:
+            await interaction.response.send_message(
+                f"`{link}` doesn't look like a tweet link.", ephemeral=True
+            )
+            return
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        summary = await self.bot.post_tweet_link(tweet_id, force_gif=True)
+        await interaction.followup.send(summary, ephemeral=True)
+
+    @app_commands.command(
+        name="video", description="Fetch a tweet's gif/video and post it as-is (no gif conversion)"
+    )
+    @app_commands.describe(link="X/Twitter status link")
+    async def video(self, interaction: discord.Interaction, link: str) -> None:
         tweet_id = parse_tweet_url(link)
         if tweet_id is None:
             await interaction.response.send_message(
