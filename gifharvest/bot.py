@@ -116,6 +116,7 @@ class GifHarvestBot(commands.Bot):
 
     async def setup_hook(self) -> None:
         await self.add_cog(HarvestCog(self))
+        self.tree.add_command(convert_message_menu)
         if self.cfg.guild_id:
             guild = discord.Object(id=self.cfg.guild_id)
             self.tree.copy_global_to(guild=guild)
@@ -294,6 +295,75 @@ class GifHarvestBot(commands.Bot):
             await self.store.mark_tweet_seen(tweet_id)
         return posted, errors
 
+    async def convert_upload(
+        self, data: bytes, filename: str, fps: int | None = None, max_width: int | None = None
+    ) -> str:
+        """Convert raw video bytes to gif and post them to the gif channel."""
+        channel, limit = await self._channel_and_limit()
+        gif = await convert_to_gif(
+            data,
+            fps=fps or self.cfg.gif_fps,
+            max_width=max_width or self.cfg.gif_max_width,
+            max_bytes=limit,
+        )
+        if gif is None:
+            return (
+                "Couldn't convert that to a gif (too big for the upload limit, "
+                "unsupported format, or ffmpeg unavailable)."
+            )
+        gif_name = str(PurePosixPath(filename).with_suffix(".gif"))
+        await channel.send(
+            f"**gif** · `{filename}`",
+            file=discord.File(io.BytesIO(gif), filename=gif_name),
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
+        return f"Posted `{gif_name}` to <#{self.cfg.channel_id}>."
+
+    async def convert_tweet_link(
+        self, tweet_id: int, fps: int | None = None, max_width: int | None = None
+    ) -> str:
+        try:
+            candidates = await self.scraper.fetch_tweet(tweet_id)
+        except NoAccountError:
+            if await self.scraper.has_active_accounts():
+                return "All donor accounts are rate-limited - try again in a few minutes."
+            return (
+                "No donor X account configured - add or refresh one with `gifharvest accounts add`."
+            )
+
+        if candidates is None:
+            return "I could not fetch that tweet from X."
+        if not candidates:
+            return "That tweet has no gif or video."
+
+        channel, limit = await self._channel_and_limit()
+        candidate = candidates[0]
+        source_limit = max(limit, _CONVERT_SOURCE_LIMIT)
+        dl = await fetch_media(self.http_client, candidate.media_url, source_limit)
+        if dl.too_big or not dl.data:
+            return "That video is too large to download for conversion."
+        gif = await convert_to_gif(
+            dl.data,
+            fps=fps or self.cfg.gif_fps,
+            max_width=max_width or self.cfg.gif_max_width,
+            max_bytes=limit,
+        )
+        if gif is None:
+            return (
+                "Couldn't convert that video to a gif "
+                "(too big for the upload limit or ffmpeg failed)."
+            )
+        gif_name = str(PurePosixPath(candidate.filename).with_suffix(".gif"))
+        caption = f"**@{candidate.author}** · <{candidate.tweet_url}>"
+        await channel.send(
+            caption,
+            file=discord.File(io.BytesIO(gif), filename=gif_name),
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
+        await self.store.record_post(candidate)
+        await self.store.mark_tweet_seen(candidate.tweet_id)
+        return f"Posted `{gif_name}` to <#{self.cfg.channel_id}>."
+
     async def post_tweet_link(self, tweet_id: int) -> str:
         try:
             candidates = await self.scraper.fetch_tweet(tweet_id)
@@ -434,6 +504,25 @@ class GifHarvestBot(commands.Bot):
         await super().close()
 
 
+_VIDEO_SUFFIXES = {".mp4", ".mov", ".webm", ".m4v"}
+
+
+def _is_video_attachment(attachment: discord.Attachment) -> bool:
+    content_type = (attachment.content_type or "").lower()
+    if content_type.startswith("video/"):
+        return True
+    name = (attachment.filename or "").lower()
+    return any(name.endswith(suffix) for suffix in _VIDEO_SUFFIXES)
+
+
+def _check_convert_options(fps: int | None, max_width: int | None) -> str | None:
+    if fps is not None and not 1 <= fps <= 50:
+        return "fps must be between 1 and 50."
+    if max_width is not None and not 64 <= max_width <= 1280:
+        return "max_width must be between 64 and 1280."
+    return None
+
+
 class HarvestCog(commands.Cog):
     track = app_commands.Group(
         name="track",
@@ -520,6 +609,67 @@ class HarvestCog(commands.Cog):
         summary = await self.bot.post_tweet_link(tweet_id)
         await interaction.followup.send(summary, ephemeral=True)
 
+    @app_commands.command(
+        name="convert", description="Convert a video to a gif and post it to the channel"
+    )
+    @app_commands.describe(
+        video="Video file to convert",
+        link="X/Twitter status link to convert instead",
+        fps="Gif frames per second, 1-50 (default from config)",
+        max_width="Gif longest side in px, 64-1280 (default from config)",
+    )
+    async def convert(
+        self,
+        interaction: discord.Interaction,
+        video: discord.Attachment | None = None,
+        link: str | None = None,
+        fps: int | None = None,
+        max_width: int | None = None,
+    ) -> None:
+        bad_option = _check_convert_options(fps, max_width)
+        if bad_option:
+            await interaction.response.send_message(bad_option, ephemeral=True)
+            return
+        if video is None and not link:
+            await interaction.response.send_message(
+                "Attach a video or pass a tweet `link`.", ephemeral=True
+            )
+            return
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        if video is not None:
+            if not _is_video_attachment(video):
+                await interaction.followup.send(
+                    f"`{video.filename}` doesn't look like a video.", ephemeral=True
+                )
+                return
+            if video.size > _CONVERT_SOURCE_LIMIT:
+                await interaction.followup.send(
+                    "That file is too large to convert "
+                    f"({video.size // (1024 * 1024)}MB > "
+                    f"{_CONVERT_SOURCE_LIMIT // (1024 * 1024)}MB).",
+                    ephemeral=True,
+                )
+                return
+            try:
+                data = await video.read()
+            except discord.HTTPException:
+                await interaction.followup.send(
+                    "Couldn't download that attachment - try again.", ephemeral=True
+                )
+                return
+            summary = await self.bot.convert_upload(data, video.filename, fps, max_width)
+            await interaction.followup.send(summary, ephemeral=True)
+            return
+        assert link is not None
+        tweet_id = parse_tweet_url(link)
+        if tweet_id is None:
+            await interaction.followup.send(
+                f"`{link}` doesn't look like a tweet link.", ephemeral=True
+            )
+            return
+        summary = await self.bot.convert_tweet_link(tweet_id, fps, max_width)
+        await interaction.followup.send(summary, ephemeral=True)
+
     @app_commands.command(name="harveststats", description="Show harvest stats")
     async def harveststats(self, interaction: discord.Interaction) -> None:
         stats = await self.bot.store.stats()
@@ -550,3 +700,31 @@ class HarvestCog(commands.Cog):
             f"Poll interval: **{self.bot.cfg.poll_minutes:g} min**",
             ephemeral=True,
         )
+
+
+@app_commands.context_menu(name="Convert to GIF")
+async def convert_message_menu(interaction: discord.Interaction, message: discord.Message) -> None:
+    """Right-click a video message → Apps → Convert to GIF."""
+    bot = interaction.client
+    assert isinstance(bot, GifHarvestBot)
+    target: discord.Attachment | None = next(
+        (a for a in message.attachments if _is_video_attachment(a)), None
+    )
+    if target is None:
+        await interaction.response.send_message(
+            "That message has no video attachment.", ephemeral=True
+        )
+        return
+    if target.size > _CONVERT_SOURCE_LIMIT:
+        await interaction.response.send_message(
+            "That video is too large to convert.", ephemeral=True
+        )
+        return
+    await interaction.response.defer(ephemeral=True, thinking=True)
+    try:
+        data = await target.read()
+    except discord.HTTPException:
+        await interaction.followup.send("Couldn't download that video - try again.", ephemeral=True)
+        return
+    summary = await bot.convert_upload(data, target.filename)
+    await interaction.followup.send(summary, ephemeral=True)
